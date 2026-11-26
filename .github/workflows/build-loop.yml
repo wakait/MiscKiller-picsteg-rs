@@ -76,7 +76,7 @@ jobs:
         run: cargo build --profile dev-release --target ${{ matrix.target }} --verbose
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: target/${{ matrix.target }}/dev-release/${{ matrix.exe }}

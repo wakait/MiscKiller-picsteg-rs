@@ -68,21 +68,21 @@ jobs:
 
       - name: 上传二进制（Linux）
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: misc_killer_picsteg_rs-linux
           path: target/release/misc_killer_picsteg_rs
 
       - name: 上传二进制（macOS）
         if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: misc_killer_picsteg_rs-macos
           path: target/release/misc_killer_picsteg_rs
 
       - name: 上传二进制（Windows）
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: misc_killer_picsteg_rs-windows
           path: target/release/misc_killer_picsteg_rs.exe
