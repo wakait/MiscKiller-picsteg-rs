@@ -118,3 +118,21 @@
 - **本地运行结果**: precheck 退出码 0；21/21 测试通过；--help/--version 输出全中文；构建产物正常
 - **根因诊断**: clap 内置 Usage/Arguments/Options 与 Print help 为英文 → 自定义 help_template + disable 内置标志后用 ArgAction::Help/Version 重建中文项
 - **下一步行动**: 按需进入 P1（JPEG DCT 域算法）
+
+### Iteration #7 - 远程仓库规范化与 v0.1.0 正式发布（2026-11-26）
+- **Commit**: 1005570（release.yml 修复）→ 0fdca41（macos-14 交叉）→ 713560f（macos-15-arm64）→ 7cb0ec0（统一 macos-latest，发布点）
+- **改动要点**:
+  - 重写 release.yml：tag(v*) 触发、4 平台矩阵、softprops/action-gh-release@v2 全自动发布、逐产物 SHA256、步骤中文化
+  - 基于 agent/pass-crack 新建 main 并设为远程默认分支；删除全部 14 个遗留 dependabot 噪音分支；远程仅留 main + agent/pass-crack
+  - 在发布提交上打中文附注标签 v0.1.0（本地旧 v0.0.x 标签不推送）
+  - release/build-loop/templates 三处 macOS 矩阵统一：x86_64 与 aarch64 均跑在 macos-latest(ARM)，Intel 产物以 x86_64-apple-darwin target 交叉编译
+- **CI 状态**: 最终 run 45812860024 全 success（4 构建 + 创建发布）。前序失败：run 45785009733（macos-13 排队 18min 取消）、45810340867（macos-14 零步骤取消）、45810819891（macos-15-arm64 无容量排队取消）
+- **本地运行结果**: precheck 退出码 0、21/21 测试；下载发布的 Windows 产物实测 `--version`=0.1.0、中文帮助正常；SHA256 与发布页校验和逐字一致（859921f5…ba846d）
+- **根因诊断（runner 标签演进，关键教训）**:
+  1. macos-13 Intel runner 容量枯竭长期排队（镜像临近退役）
+  2. **macos-14 镜像已于 2026-11-02 完全停止支持** → 标签被直接取消、零步骤、runner 名为空
+  3. macos-15-arm64 标签虽被识别但本账户无 runner 容量，持续 queued
+  4. 正解：同架构下改用容量充足且已验证可秒调度的 macos-latest，靠 Rust target 区分双架构；Apple clang/ld 原生支持 x86_64 交叉，无需额外链接器
+  5. `file` 验证交叉产物确为 Mach-O x86_64（CPU type 0x01000007），与 arm64 产物架构正确区分
+- **完整性校验**: 本地 HEAD = 远程 main = v0.1.0 标签提交 = 7cb0ec0；发布页 HTTP 200；附件直链 200 application/octet-stream；8 个附件（4 二进制 + 4 sha256）齐全
+- **下一步行动**: 发布目标达成，结束闭环。后续按需 P1（JPEG DCT 域 steghide/F5/stegpy）
