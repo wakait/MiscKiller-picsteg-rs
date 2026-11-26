@@ -170,7 +170,7 @@ impl fmt::Display for DetectResult {
                 }
             }
             DetectResult::FileType(desc) => {
-                // file 命令结果的颜色逻辑
+                // 内置文件类型识别结果的颜色逻辑（描述为 GNU file 风格英文，含下方关键词）
                 let colored_desc = if desc.to_lowercase().contains("dbase 3 data") {
                     // DBase 3 数据类型整体显示为灰色
                     format!("file: {}", desc).bright_black().to_string()

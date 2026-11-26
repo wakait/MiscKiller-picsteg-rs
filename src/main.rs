@@ -8,7 +8,7 @@ mod carve;
 mod checker;
 mod crack;
 mod extractor;
-mod file_cmd;
+mod filetype;
 mod hexdump;
 mod imageio;
 mod metadata;
@@ -92,7 +92,7 @@ struct Cli {
     #[arg(short = 'l', long = "limit")]
     limit: Option<usize>,
 
-    /// 是否调用系统 'file' 命令识别数据类型（默认开启）
+    /// 启用内置文件类型识别（默认开启，无需系统 file 命令）
     #[arg(long = "file", action = ArgAction::Set, default_value_t = true)]
     file_cmd: bool,
 
