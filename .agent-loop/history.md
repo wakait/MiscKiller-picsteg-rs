@@ -87,3 +87,21 @@
   2. 合成 JPEG 无法被 image crate 解码 → metadata 增加纯字节回退，不依赖完整解码
   3. load_auto 只认 PNG 其余按 BMP → 补 JPEG 魔数与加载器
 - **下一步行动**: 云端 watch + fetch_run 验证；随后 P0 第二项 PNG 宽高 CRC 爆破
+
+### Iteration #5 - P0 宽高爆破/文件雕刻/一键流水线（2026-11-26）
+- **Commit**: fdd2abf（IHDR）、f6a3baa（carve）、f1ba8c3（analyze）
+- **改动要点**:
+  - src/pngcrack.rs：CRC32 查表 + IHDR 宽高爆破（先线性后二维）+ 修复写回，5 单测
+  - src/carve.rs：内置 13 种 magic 签名（PNG/JPG/GIF/ZIP/RAR/7z/GZ/PDF/BMP/ELF/CLASS/SQLITE/RTF），EOF 边界识别与导出，5 单测
+  - src/main.rs：--ihdr-brute/--ihdr-max/--fix-ihdr-out、--carve/--carve-out-dir、--analyze 一键五步流水线
+  - 累计 21 单测全过
+- **CI 状态**: 已推送，待云端验证
+- **本地运行结果**:
+  - precheck 退出码 0；21/21 测试
+  - IHDR：篡改 prime.png 宽度后准确还原 256x256，修复字节与原件 SequenceEqual=True
+  - carve：polyglot(PNG+ZIP) 准确识别 offset=244 的 ZIP 并导出，头 50 4b 03 04 正确
+  - analyze：五步全跑通，同一 polyglot 同时报出 foobar3 明文、ZIP 雕刻、IEND extradata
+- **根因诊断**:
+  1. PowerShell 反引号转义不产生真控制字节 → 用显式 byte[] 构造 polyglot
+  2. 合成 JPEG 无法解码 → metadata 纯字节回退（Iteration#4 已解决，analyze 复用）
+- **下一步行动**: 云端 watch + fetch_run 验证三平台产物；P0 收尾后进入 P1（JPEG DCT 域 steghide/F5/stegpy）
