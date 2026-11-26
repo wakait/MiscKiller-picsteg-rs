@@ -44,6 +44,17 @@ echo "[i] 使用 cargo: $CARGO"
 # Windows cargo.exe 在 WSL 下输出 Windows 路径，统一用正斜杠规避反斜杠转义
 export CARGO_TERM_COLOR=always
 
+# gh CLI 探测：WSL 默认 PATH 不含 Windows 侧 gh.exe（位于带空格的 Program Files）
+detect_gh() {
+  local win_gh="/mnt/c/Program Files/GitHub CLI/gh.exe"
+  if [[ -x "$win_gh" ]]; then echo "$win_gh"; return 0; fi
+  if command -v gh >/dev/null 2>&1; then command -v gh; return 0; fi
+  echo "[FATAL] 未找到 gh CLI（Windows gh.exe 与 Linux gh 均缺失）" >&2
+  exit 127
+}
+GH="$(detect_gh)"
+echo "[i] 使用 gh: $GH"
+
 # 当前平台 -> 对应 artifact 名
 default_artifact() {
   case "$(uname -s)" in
@@ -96,7 +107,7 @@ cmd_watch() {
 
   # 最多等待 30s 让 push 触发的 run 入队
   for _ in $(seq 1 15); do
-    run_id="$(gh run list --workflow "$WORKFLOW" --branch "$branch" \
+    run_id="$("$GH" run list --workflow "$WORKFLOW" --branch "$branch" \
       --limit 1 --json databaseId --jq '.[0].databaseId // empty' || true)"
     [[ -n "$run_id" ]] && break
     sleep 2
@@ -108,9 +119,9 @@ cmd_watch() {
   fi
 
   echo "==> 监控 run #$run_id"
-  gh run watch "$run_id" --exit-status --interval 15 || true
+  "$GH" run watch "$run_id" --exit-status --interval 15 || true
 
-  read -r status conclusion < <(gh run view "$run_id" \
+  read -r status conclusion < <("$GH" run view "$run_id" \
     --json status,conclusion --jq '"\(.status) \(.conclusion // "")"')
   echo "==> status=$status conclusion=$conclusion"
 
@@ -120,7 +131,7 @@ cmd_watch() {
   fi
 
   echo "[FAIL] 云端构建失败，提取失败作业核心日志（--log-failed）：" >&2
-  gh run view "$run_id" --log-failed 2>&1 | grep -Ei "error|panic|warning: unused|cannot|failed" | head -n 80 >&2 || true
+  "$GH" run view "$run_id" --log-failed 2>&1 | grep -Ei "error|panic|warning: unused|cannot|failed" | head -n 80 >&2 || true
   return 1
 }
 
@@ -135,7 +146,7 @@ cmd_fetch_run() {
 
   local branch run_id ts dl_dir exe logfile
   branch="$(current_branch)"
-  run_id="$(gh run list --workflow "$WORKFLOW" --branch "$branch" \
+  run_id="$("$GH" run list --workflow "$WORKFLOW" --branch "$branch" \
     --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
   if [[ -z "${run_id:-}" ]]; then
     echo "[FATAL] 分支 $branch 无成功的云端运行，无法拉取产物" >&2
@@ -147,7 +158,7 @@ cmd_fetch_run() {
   logfile="$LOG_DIR/run_${ts}.log"
 
   echo "==> 从 run #$run_id 下载 artifact: $artifact"
-  gh run download "$run_id" -n "$artifact" -D "$dl_dir"
+  "$GH" run download "$run_id" -n "$artifact" -D "$dl_dir"
 
   # 找到下载下来的可执行文件（artifact 内通常为单文件）
   exe="$(find "$dl_dir" -type f | head -n 1)"
