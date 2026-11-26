@@ -61,18 +61,16 @@ pub fn extract(image: &Image, opts: &Options, title_out: &mut String) -> Vec<u8>
                 parse_byte_order(order_str, image);
 
             let bytes_per_line = if image.format == crate::imageio::ImgFormat::Bmp {
-                // BMP: 每行字节数 = width * bytes_per_pixel
-                // 对于24位BMP = width * 3，但需要考虑行对齐
+                // BMP：每行字节数 = 宽度 × 每像素字节数
+                // 24 位 BMP 即宽度 × 3，且需按 4 字节行对齐
                 (image.width as usize * 3).div_ceil(4) * 4
             } else {
-                // PNG: imagedata 包含 scanline 数据，每行前有filter字节
-                (image.width as usize * 4) + 1 // RGBA + 1 filter byte
+                // PNG：imagedata 含扫描线数据，每行开头有 1 个过滤器字节
+                (image.width as usize * 4) + 1 // RGBA 4 字节 + 1 个过滤器字节
             };
 
-            // 按照 Ruby byte_iterator 的逻辑：
-            // if type[0,1].downcase == 'b' => ROW iterator (natural): y0.step(y1,ystep){ |y| x0.step(x1,xstep){ |x| yield(x,y) }}
-            // else => COLUMN iterator: x0.step(x1,xstep){ |x| y0.step(y1,ystep){ |y| yield(x,y) }}
-
+            // 对应 Ruby 版 byte_iterator 的逻辑：
+            // 类型首字符（忽略大小写）为 'b' 时按行迭代（自然顺序），否则按列迭代
             let is_row_first = order_str
                 .chars()
                 .next()
@@ -82,7 +80,7 @@ pub fn extract(image: &Image, opts: &Options, title_out: &mut String) -> Vec<u8>
             let mut byte_idx = 0;
 
             if is_row_first {
-                // ROW iterator: 先遍历行(y)，再遍历字节(x)
+                // 行迭代器：先遍历行（y），再遍历行内字节（x）
                 'outer: for y in make_range(y_start, y_end, y_step) {
                     let line_start = y * bytes_per_line;
                     for x in make_range(x_start, x_end, x_step) {
@@ -102,7 +100,7 @@ pub fn extract(image: &Image, opts: &Options, title_out: &mut String) -> Vec<u8>
                     }
                 }
             } else {
-                // COLUMN iterator: 先遍历字节(x)，再遍历行(y)
+                // 列迭代器：先遍历字节列（x），再遍历行（y）
                 'outer: for x in make_range(x_start, x_end, x_step) {
                     for y in make_range(y_start, y_end, y_step) {
                         let line_start = y * bytes_per_line;
@@ -170,13 +168,13 @@ pub fn extract(image: &Image, opts: &Options, title_out: &mut String) -> Vec<u8>
         }
     }
 
-    // shift: 前置 N 个 0 比特（等价于将输出整体右移 N 位）
+    // shift：前置 N 个零比特（等价于把输出整体右移 N 位）
     if let Some(shift) = opts.shift
         && shift > 0
     {
         out = shift_prepend_zero_bits(out, shift as u32);
     }
-    // invert: 对每个字节异或 0xFF
+    // invert：对每个字节异或 0xFF
     if opts.invert {
         for b in &mut out {
             *b ^= 0xFF;
@@ -210,9 +208,9 @@ fn make_range(start: usize, end: usize, step: usize) -> Box<dyn Iterator<Item = 
 }
 
 fn parse_byte_order(order: &str, image: &Image) -> (usize, usize, usize, usize, usize, usize) {
-    // 解析类似 "bY", "BY", "yb", "Yb" 等
-    // 'b'/'B' 表示字节（x方向），'y'/'Y' 表示行（y方向）
-    // 小写表示正向（0->max），大写表示逆向（max->0）
+    // 解析 "bY"、"BY"、"yb"、"Yb" 等顺序
+    // 'b'/'B' 表示字节方向（x 轴），'y'/'Y' 表示行方向（y 轴）
+    // 小写为正向（0→最大值），大写为逆向（最大值→0）
 
     let bytes_per_line = if image.format == crate::imageio::ImgFormat::Bmp {
         (image.width as usize * 3).div_ceil(4) * 4
@@ -223,7 +221,7 @@ fn parse_byte_order(order: &str, image: &Image) -> (usize, usize, usize, usize, 
     let max_y = (image.height as usize).saturating_sub(1);
     let max_x = bytes_per_line.saturating_sub(1);
 
-    // 默认值 (正向)
+    // 默认取值（正向）
     let mut x_start = 0;
     let mut x_end = max_x;
     let x_step = 1;
@@ -342,27 +340,27 @@ fn push_nbits(
     nb: u16,
     bit_order: BitOrder,
 ) {
-    // 原版逻辑：逐位提取，然后按 bit_order 排列成字节
-    // bit_indexes(bits) 返回要提取的位索引，例如 bits=3 返回 [2,1,0]
+    // 与原版一致：逐位提取后，再按比特顺序拼装成字节
+    // 位索引序列，例如 bits=3 时为 [2,1,0]
     let nb_u = (nb as u8).min(8);
     let bit_indexes: Vec<u8> = (0..nb_u).rev().collect(); // [nb_u-1, ..., 1, 0]
 
-    // 临时存储提取的位
+    // 暂存提取出的各个比特
     let mut bits = Vec::new();
     for bidx in bit_indexes {
         let bit_value = (v >> bidx) & 1;
         bits.push(bit_value);
     }
 
-    // 按 bit_order 将位累积成字节
+    // 按比特顺序将各比特累积为字节
     for bit in bits {
         match bit_order {
             BitOrder::Lsb => {
-                // lsb: 第一个位放在最高位
+                // 最低位优先：先到的比特放入较高位
                 *cur = (*cur << 1) | bit;
             }
             BitOrder::Msb => {
-                // msb: 第一个位放在最低位
+                // 最高位优先：先到的比特放入较低位
                 *cur |= bit << *cur_bits;
             }
         }

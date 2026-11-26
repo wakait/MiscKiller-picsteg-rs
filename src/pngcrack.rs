@@ -1,9 +1,9 @@
 //! PNG 宽高 CRC 爆破（对标 stegsolve/PNG 尺寸修复类 CTF 考点）。
 //!
-//! IHDR 结构：`length(4) | "IHDR"(4) | width(4) | height(4) | bitdepth(1)
-//! | colortype(1) | compression(1) | filter(1) | interlace(1) | CRC32(4)`
+//! IHDR 结构：`长度(4) | "IHDR"(4) | 宽度(4) | 高度(4) | 位深(1)
+//! | 颜色类型(1) | 压缩方法(1) | 过滤器(1) | 隔行方式(1) | CRC32(4)`
 //! CRC32 计算范围为类型字节 + 13 字节数据。攻击者常改小宽/高使图片只显示部分内容，
-//! 但保留正确 CRC。本模块在 CRC 已知的前提下，遍历候选 width/height 重算 CRC，
+//! 但保留正确 CRC。本模块在 CRC 已知的前提下，遍历候选宽度/高度重算 CRC，
 //! 找到与文件内 CRC 一致的组合，即还原真实尺寸。
 
 /// IHDR 爆破结果
@@ -146,12 +146,12 @@ mod tests {
     fn make_png_with_ihdr(width: u32, height: u32) -> Vec<u8> {
         let mut raw = vec![
             0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00,
-            0x0D, // IHDR length=13
+            0x0D, // IHDR 数据长度为 13
             b'I', b'H', b'D', b'R',
         ];
         raw.extend_from_slice(&width.to_be_bytes());
         raw.extend_from_slice(&height.to_be_bytes());
-        raw.extend_from_slice(&[8, 2, 0, 0, 0]); // bitdepth/colortype/...
+        raw.extend_from_slice(&[8, 2, 0, 0, 0]); // 位深/颜色类型等字段
         let crc = crc32(&raw[12..29]); // 类型+数据
         raw.extend_from_slice(&crc.to_be_bytes());
         raw

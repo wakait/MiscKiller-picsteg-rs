@@ -11,13 +11,13 @@ fn escape_bytes_to_string(data: &[u8]) -> String {
             b'\t' => result.push_str("\\t"),
             b'\\' => result.push_str("\\\\"),
             b'"' => result.push_str("\\\""),
-            0x07 => result.push_str("\\a"),                 // bell
-            0x08 => result.push_str("\\b"),                 // backspace
-            0x0B => result.push_str("\\v"),                 // vertical tab
-            0x0C => result.push_str("\\f"),                 // form feed
-            0x1B => result.push_str("\\e"),                 // escape
-            0x20..=0x7e => result.push(b as char),          // 可打印ASCII
-            _ => result.push_str(&format!("\\x{:02X}", b)), // 不可见字符用 hex
+            0x07 => result.push_str("\\a"),                 // 响铃符
+            0x08 => result.push_str("\\b"),                 // 退格符
+            0x0B => result.push_str("\\v"),                 // 垂直制表符
+            0x0C => result.push_str("\\f"),                 // 换页符
+            0x1B => result.push_str("\\e"),                 // 转义符
+            0x20..=0x7e => result.push(b as char),          // 可打印 ASCII
+            _ => result.push_str(&format!("\\x{:02X}", b)), // 不可见字符用十六进制表示
         }
     }
     result.push('"');
@@ -70,7 +70,7 @@ impl fmt::Display for DetectResult {
                 )
             }
             DetectResult::WholeText(s) => {
-                // WholeText: "text: " 灰色，内容亮红色
+                // 整段文本：前缀 "text: " 灰色，内容亮红色
                 write!(
                     f,
                     "{}{}",
@@ -79,7 +79,7 @@ impl fmt::Display for DetectResult {
                 )
             }
             DetectResult::PartialText { text, offset } => {
-                // PartialText: 根据条件决定颜色
+                // 部分文本：根据条件决定显示颜色
                 let text_repr = format!("{:?}", text);
                 let colored_text = if *offset == 0 {
                     // 从数据开头开始 => 亮红色
@@ -152,7 +152,7 @@ impl fmt::Display for DetectResult {
                 }
                 // 对原始字节进行转义处理
                 let escaped_data = escape_bytes_to_string(data_preview);
-                // escape_bytes_to_string 已经包含了引号，所以不需要再加
+                // 转义函数已包含引号，这里无需重复添加
                 parts.push(format!("data={}...", escaped_data));
                 if *even {
                     parts.push("even=true".to_string());
@@ -172,7 +172,7 @@ impl fmt::Display for DetectResult {
             DetectResult::FileType(desc) => {
                 // file 命令结果的颜色逻辑
                 let colored_desc = if desc.to_lowercase().contains("dbase 3 data") {
-                    // DBase 3 data => 整体灰色
+                    // DBase 3 数据类型整体显示为灰色
                     format!("file: {}", desc).bright_black().to_string()
                 } else {
                     // 检查是否匹配特定关键词

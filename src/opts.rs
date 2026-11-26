@@ -21,8 +21,8 @@ pub struct Options {
     pub order: OrderSpec,
     pub step: usize,
     pub ystep: usize,
-    pub channels: Option<Vec<String>>, // None means auto
-    pub bits: Option<Vec<u16>>,        // Ruby: number or mask (>=0x100)
+    pub channels: Option<Vec<String>>, // 为 None 时表示自动选择
+    pub bits: Option<Vec<u16>>,        // 数字形式，或掩码形式（>=0x100）
     pub bit_order: Option<BitOrder>,
     pub prime: PrimeSpec,
     pub pixel_align: PixelAlignSpec,
@@ -91,7 +91,7 @@ pub fn parse_bits(s: &str, pixel_align_out: &mut bool) -> Result<Vec<u16>> {
     for x in xs {
         let x = x.trim();
         if x.eq_ignore_ascii_case("all") {
-            // special: range 1-8
+            // 特殊取值：展开为 1-8 全区间
             out.extend(1u16..=8);
             continue;
         }
@@ -101,7 +101,7 @@ pub fn parse_bits(s: &str, pixel_align_out: &mut bool) -> Result<Vec<u16>> {
             let aa = parse_bits_single(a)?;
             let bb = parse_bits_single(b)?;
             if aa == 0 || bb == 0 || aa > 8 || bb > 8 {
-                bail!("invalid bits range: {}", x);
+                bail!("无效的位数区间: {}", x);
             }
             if aa <= bb {
                 out.extend(aa..=bb);
@@ -118,7 +118,7 @@ pub fn parse_bits(s: &str, pixel_align_out: &mut bool) -> Result<Vec<u16>> {
 
 fn parse_bits_single(x: &str) -> Result<u16> {
     if x == "1" {
-        // catch NOT A BINARY MASK early
+        // 提前拦截，避免被误判为二进制掩码
         return Ok(1);
     }
     if let Some(hex) = x.strip_prefix("0x") {
@@ -136,7 +136,7 @@ fn parse_bits_single(x: &str) -> Result<u16> {
     if let Ok(v) = x.parse::<u16>() {
         return Ok(v);
     }
-    bail!("invalid bits value: {}", x)
+    bail!("无效的位数取值: {}", x)
 }
 
 pub fn decode_param_string(s: &str) -> Result<Options> {
@@ -194,7 +194,7 @@ pub fn decode_param_string(s: &str) -> Result<Options> {
                     o.extra_checks = false;
                     continue;
                 }
-                bail!("unknown param {}", x);
+                bail!("未知参数 {}", x);
             }
         }
     }

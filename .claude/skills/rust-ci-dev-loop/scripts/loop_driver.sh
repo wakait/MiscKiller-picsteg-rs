@@ -89,26 +89,26 @@ guard_branch() {
 }
 
 cmd_precheck() {
-  echo "==> [1/4] cargo fmt --check"
+  echo "==> [1/4] 代码格式检查 cargo fmt --check"
   "$CARGO" fmt --all -- --check
 
-  echo "==> [2/4] cargo clippy (-D warnings)"
+  echo "==> [2/4] 静态检查 cargo clippy（-D warnings）"
   "$CARGO" clippy --all-targets --all-features -- -D warnings
 
-  echo "==> [3/4] cargo build --profile dev-release"
+  echo "==> [3/4] 以 dev-release 配置构建"
   "$CARGO" build --profile dev-release
 
-  echo "==> [4/4] cargo test"
+  echo "==> [4/4] 运行单元测试 cargo test"
   "$CARGO" test --verbose
 
-  echo "[OK] precheck passed on $(current_branch)"
+  echo "[OK] 本地门禁通过，当前分支 $(current_branch)"
 }
 
 cmd_watch() {
   guard_branch
   local branch run_id status conclusion
   branch="$(current_branch)"
-  echo "==> 等待分支 $branch 的 workflow run 出队..."
+  echo "==> 等待分支 $branch 的工作流运行入队..."
 
   # 最多等待 30s 让 push 触发的 run 入队
   for _ in $(seq 1 15); do
@@ -123,15 +123,15 @@ cmd_watch() {
     exit 3
   fi
 
-  echo "==> 监控 run #$run_id"
+  echo "==> 监控运行 #$run_id"
   "$GH" run watch "$run_id" --exit-status --interval 15 || true
 
   read -r status conclusion < <("$GH" run view "$run_id" \
     --json status,conclusion --jq '"\(.status) \(.conclusion // "")"')
-  echo "==> status=$status conclusion=$conclusion"
+  echo "==> 状态=$status 结论=$conclusion"
 
   if [[ "$conclusion" == "success" ]]; then
-    echo "[OK] 云端构建成功 run #$run_id"
+    echo "[OK] 云端构建成功，运行 #$run_id"
     return 0
   fi
 
@@ -146,7 +146,7 @@ cmd_fetch_run() {
   shift "$(( $# >= 3 ? 3 : $# ))" || true
   local run_args=("$@")
 
-  # dev-latest：自动选择当前平台对应的 artifact
+  # dev-latest：自动选择当前平台对应的构建产物
   [[ "$artifact" == "dev-latest" ]] && artifact="$(default_artifact)"
 
   local branch run_id ts dl_dir exe logfile
@@ -169,12 +169,12 @@ cmd_fetch_run() {
     dl_win="$dl_dir"
   fi
 
-  echo "==> 从 run #$run_id 下载 artifact: $artifact"
+  echo "==> 从运行 #$run_id 下载构建产物：$artifact"
   "$GH" run download "$run_id" -n "$artifact" -D "$dl_win"
 
-  # 找到下载下来的可执行文件（artifact 内通常为单文件）
+  # 找到下载下来的可执行文件（产物内通常为单文件）
   exe="$(find "$dl_dir" -type f | head -n 1)"
-  [[ -z "$exe" ]] && { echo "[FATAL] artifact $artifact 内无文件" >&2; exit 4; }
+  [[ -z "$exe" ]] && { echo "[FATAL] 构建产物 $artifact 内无文件" >&2; exit 4; }
   chmod +x "$exe" 2>/dev/null || true
 
   echo "==> 运行（超时 ${timeout_sec}s，RUST_LOG=debug RUST_BACKTRACE=1）: $exe ${run_args[*]:-}"
@@ -207,8 +207,8 @@ cmd_fetch_run() {
 
   local elapsed="n/a"
   echo "----- 结构化摘要 -----"
-  echo "Exit Code : $exit_code (124=超时)"
-  echo "Artifact  : $artifact (run #$run_id)"
+  echo "退出码    : $exit_code（124 表示超时）"
+  echo "构建产物  : $artifact（运行 #$run_id）"
   echo "日志路径  : $logfile"
   echo "----- 报错摘要（PANIC/ERROR 精准检索）-----"
   grep -Ein "panic|error|failed|cannot" "$logfile" | head -n 30 || echo "(无 PANIC/ERROR 关键词)"
@@ -227,10 +227,10 @@ main() {
     fetch_run)  shift; cmd_fetch_run "$@" ;;
     *)
       cat >&2 <<EOF
-用法:
+用法：
   $0 precheck
   $0 watch
-  $0 fetch_run <artifact|dev-latest> <bin_name> <timeout_sec> [program args...]
+  $0 fetch_run <构建产物|dev-latest> <程序名> <超时秒数> [程序参数...]
 EOF
       exit 64 ;;
   esac

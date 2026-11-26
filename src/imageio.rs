@@ -22,11 +22,11 @@ pub struct Image {
     pub format: ImgFormat,
     pub width: u32,
     pub height: u32,
-    pub pixels: Vec<u8>,    // RGBA8 (decoded pixels)
-    pub imagedata: Vec<u8>, // raw scanlines with filter bytes (PNG) or pixels (BMP)
+    pub pixels: Vec<u8>,    // 解码后的 RGBA8 像素
+    pub imagedata: Vec<u8>, // 原始扫描线：PNG 含过滤器字节，BMP 为像素数据
     pub metadata: HashMap<String, String>,
-    pub chunks: Vec<PngChunk>,   // PNG only; others empty
-    pub extradata: Vec<Vec<u8>>, // 占位
+    pub chunks: Vec<PngChunk>,   // 仅 PNG 使用，其他格式为空
+    pub extradata: Vec<Vec<u8>>, // IEND 结束标记之后的附加数据
 }
 
 impl Image {
@@ -47,7 +47,7 @@ impl Image {
 
     fn load_auto(path: &Path) -> Result<Self> {
         // 简易魔数检测 PNG/JPEG，否则尝试 BMP
-        let mut f = File::open(path).with_context(|| format!("open {:?}", path))?;
+        let mut f = File::open(path).with_context(|| format!("打开文件失败 {:?}", path))?;
         let mut sig = [0u8; 8];
         let n = f.read(&mut sig)?;
         drop(f);
@@ -63,10 +63,10 @@ impl Image {
     /// JPEG 解码：image crate 提供像素；imagedata 保留原始文件字节，
     /// 供元数据/雕刻/strings 等基于原始字节的分析使用（JPEG 无 LSB 扫描线）。
     fn load_jpeg(path: &Path) -> Result<Self> {
-        let img = image::open(path).with_context(|| "decode jpeg")?;
+        let img = image::open(path).with_context(|| "解码 JPEG 失败")?;
         let rgba = img.to_rgba8();
         let (w, h) = rgba.dimensions();
-        let raw = std::fs::read(path).with_context(|| "read jpeg bytes")?;
+        let raw = std::fs::read(path).with_context(|| "读取 JPEG 字节失败")?;
         Ok(Self {
             format: ImgFormat::Jpeg,
             width: w,
@@ -80,7 +80,7 @@ impl Image {
     }
 
     fn load_bmp(path: &Path) -> Result<Self> {
-        let img = image::open(path).with_context(|| "decode bmp")?;
+        let img = image::open(path).with_context(|| "解码 BMP 失败")?;
         let rgba = img.to_rgba8();
         let (w, h) = rgba.dimensions();
         let pixels = rgba.to_vec();
@@ -109,12 +109,12 @@ impl Image {
         let mut header = [0u8; 14];
         f.read_exact(&mut header)?;
 
-        // 检查签名
+        // 检查 BMP 签名
         if &header[0..2] != b"BM" {
-            return Err(anyhow::anyhow!("Not a BMP file"));
+            return Err(anyhow::anyhow!("不是有效的 BMP 文件"));
         }
 
-        // 读取 pixel data 的偏移量（字节10-13）
+        // 读取像素数据偏移量（文件头第 10-13 字节）
         let pixel_offset = u32::from_le_bytes([header[10], header[11], header[12], header[13]]);
 
         // 读取 DIB 头部
@@ -122,7 +122,7 @@ impl Image {
         f.read_exact(&mut dib_header)?;
 
         let bits_per_pixel = u16::from_le_bytes([dib_header[14], dib_header[15]]);
-        // height 可能是负数，表示 top-down
+        // 高度字段可能为负数，表示自上而下存储（top-down）
         let height_signed =
             i32::from_le_bytes([dib_header[8], dib_header[9], dib_header[10], dib_header[11]]);
         let is_bottom_up = height_signed > 0;
@@ -139,8 +139,8 @@ impl Image {
         let mut pixel_data = vec![0u8; total_size];
         f.read_exact(&mut pixel_data)?;
 
-        // BMP 默认是 bottom-up 存储，需要翻转到 top-down
-        // 因为 image crate 解码后的 RGBA 是 top-down 的
+        // BMP 默认自下而上（bottom-up）存储，需翻转为自上而下
+        // 因为 image crate 解码得到的 RGBA 是自上而下（top-down）排列
         if is_bottom_up {
             let mut flipped = vec![0u8; total_size];
             for y in 0..height as usize {
@@ -156,13 +156,13 @@ impl Image {
     }
 
     fn load_png(path: &Path) -> Result<Self> {
-        let file = File::open(path).with_context(|| format!("open {:?}", path))?;
+        let file = File::open(path).with_context(|| format!("打开文件失败 {:?}", path))?;
         let mut r = BufReader::new(file);
 
-        // 解析 PNG chunk 简单列表
+        // 解析 PNG 数据块的简化列表
         let mut sig = [0u8; 8];
         r.read_exact(&mut sig)?;
-        anyhow::ensure!(&sig == b"\x89PNG\r\n\x1a\n", "invalid png signature");
+        anyhow::ensure!(&sig == b"\x89PNG\r\n\x1a\n", "无效的 PNG 签名");
 
         let mut chunks: Vec<PngChunk> = Vec::new();
         let mut found_iend = false;
@@ -187,7 +187,7 @@ impl Image {
             }
         }
 
-        // 提取IEND后的extradata
+        // 提取 IEND 结束标记之后的附加数据
         let mut extradata = Vec::new();
         if found_iend {
             let mut extra_buf = Vec::new();
@@ -198,7 +198,7 @@ impl Image {
         }
 
         // 用 image crate 解码像素
-        let img = image::open(path).with_context(|| "decode png")?;
+        let img = image::open(path).with_context(|| "解码 PNG 失败")?;
         let rgba = img.to_rgba8();
         let (w, h) = rgba.dimensions();
 
@@ -240,7 +240,7 @@ impl Image {
         let mut imagedata = Vec::new();
         decoder
             .read_to_end(&mut imagedata)
-            .with_context(|| "decompress IDAT")?;
+            .with_context(|| "解压 IDAT 数据失败")?;
 
         Ok(Self {
             format: ImgFormat::Png,
@@ -256,7 +256,7 @@ impl Image {
 }
 
 fn parse_png_text(data: &[u8]) -> Option<(String, String)> {
-    // tEXt: keyword\0text
+    // tEXt 块结构：关键字 \0 文本
     let pos = data.iter().position(|&b| b == 0)?;
     let (k, v) = data.split_at(pos);
     let v = &v[1..];
@@ -267,10 +267,11 @@ fn parse_png_text(data: &[u8]) -> Option<(String, String)> {
 }
 
 fn parse_png_itxt(data: &[u8]) -> Option<(String, String)> {
-    // iTXt: keyword\0compressFlag\0langTag\0translated\0text (简化：忽略压缩与语言)
+    // iTXt 块结构：关键字 \0 压缩标志 \0 语言标签 \0 译文 \0 文本
+    // 此处简化处理，忽略压缩标志与语言信息
     let mut parts = data.split(|&b| b == 0);
     let k = parts.next()?;
-    let _compress = parts.next()?; // flag+method（简化合并）
+    let _compress = parts.next()?; // 压缩标志与方法（简化合并）
     let _lang = parts.next()?;
     let _translated = parts.next()?;
     let rest = parts.next().unwrap_or_default();
@@ -281,13 +282,13 @@ fn parse_png_itxt(data: &[u8]) -> Option<(String, String)> {
 }
 
 fn parse_png_ztxt(data: &[u8]) -> Option<(String, String)> {
-    // zTXt: keyword\0compressionMethod\0compressedText
+    // zTXt 块结构：关键字 \0 压缩方法 \0 压缩文本
     let pos = data.iter().position(|&b| b == 0)?;
     let k = &data[..pos];
     if pos + 2 > data.len() {
         return None;
     }
-    let _compression_method = data[pos + 1]; // 应该是 0 (deflate)
+    let _compression_method = data[pos + 1]; // 应为 0（deflate）
     let compressed_data = &data[pos + 2..];
 
     // 解压数据

@@ -129,7 +129,7 @@ fn try_decrypt(enc_blob: &[u8], password: &str, key_len: usize) -> Option<Vec<u8
             .ok()?,
         _ => return None,
     };
-    // decrypt_padded_mut::<Pkcs7> 成功即代表填充合法且已被去除
+    // 解密成功即代表填充合法，且填充已被自动去除
     Some(plain.to_vec())
 }
 
@@ -279,13 +279,13 @@ mod tests {
     fn parse_openstego_header() {
         // OPENSTEGO + 9 字节头 + 文件名 + 加密体
         let mut data = b"OPENSTEGO".to_vec();
-        data.push(1); // version
-        data.extend_from_slice(&100u32.to_le_bytes()); // data_len
-        data.push(1); // channel_bits
+        data.push(1); // 版本号
+        data.extend_from_slice(&100u32.to_le_bytes()); // 数据长度
+        data.push(1); // 通道位数
         let fname = b"secret.jpg";
-        data.push(fname.len() as u8); // fname_len
-        data.push(1); // compress
-        data.push(1); // encrypt
+        data.push(fname.len() as u8); // 文件名长度
+        data.push(1); // 是否压缩
+        data.push(1); // 是否加密
         data.extend_from_slice(fname);
         data.push(0x14); // 加密体 param_len（后续内容不影响头部解析）
 

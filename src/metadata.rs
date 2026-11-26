@@ -127,7 +127,7 @@ fn scan_jpeg(raw: &[u8]) -> Vec<MetaTag> {
 pub fn collect(image: &Image, raw_path: &Path) -> Vec<MetaTag> {
     let mut tags = Vec::new();
 
-    // PNG 文本块（imageio 已解析 keyword -> value）
+    // PNG 文本块（imageio 已解析为“键 -> 值”）
     let mut keys: Vec<&String> = image.metadata.keys().collect();
     keys.sort();
     for k in keys {
@@ -168,13 +168,13 @@ mod tests {
     fn scans_jpeg_comment_and_app0() {
         // 构造最小 JPEG 结构：SOI + APP0(段) + COM(段) + SOS 占位
         let mut jpeg = vec![0xFF, 0xD8];
-        // APP0: marker + len(2) + "JFIF\0..."
+        // APP0 段：标记 + 2 字节长度 + "JFIF\0..." 数据
         let app0 = b"JFIF\0abc";
         jpeg.push(0xFF);
         jpeg.push(0xE0);
         jpeg.extend_from_slice(&((app0.len() + 2) as u16).to_be_bytes());
         jpeg.extend_from_slice(app0);
-        // COM
+        // COM 注释段
         let com = b"secret comment";
         jpeg.push(0xFF);
         jpeg.push(0xFE);

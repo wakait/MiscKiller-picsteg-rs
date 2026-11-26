@@ -36,7 +36,7 @@ impl<'a> Checker<'a> {
             file_cmd: FileCmd::new(self.options.file_cmd),
         };
 
-        // metadata
+        // 元数据
         for (k, v) in &self.image.metadata {
             let _r = DetectResult::WholeText(v.clone());
             if self.process_result(
@@ -50,7 +50,7 @@ impl<'a> Checker<'a> {
             }
         }
 
-        // imagedata - 对于特殊检查，使用 limit=0 表示搜索整个数据
+        // 图像数据：特殊检查时用 limit=0 表示搜索整段数据
         let mut temp_opts = self.options.clone();
         temp_opts.limit = 0; // 搜索整个 imagedata
         let temp_checker = Checker {
@@ -67,7 +67,7 @@ impl<'a> Checker<'a> {
             state.found_anything = true;
         }
 
-        // extradata - IEND后的额外数据
+        // 附加数据：IEND 结束标记之后的额外数据
         if !self.image.extradata.is_empty() {
             for (idx, extra) in self.image.extradata.iter().enumerate() {
                 if !extra.is_empty() {
@@ -103,7 +103,7 @@ impl<'a> Checker<'a> {
             }
         }
 
-        // chunks（PNG）
+        // 数据块（仅 PNG）
         for (idx, ch) in self.image.chunks.iter().enumerate() {
             if ch.data.len() >= 5 && &ch.ty != b"IDAT" {
                 let title = format!(
@@ -169,10 +169,10 @@ impl<'a> Checker<'a> {
             for &prime in &prime_vals {
                 for &bits in &bits_list {
                     if order.contains('b') || order.contains('B') {
-                        // byte iterator: no channels
+                        // 字节迭代器：不涉及通道
                         self.check_one_combination(&order, prime, bits, &mut state, &mut results);
                     } else {
-                        // pixel iterator: iterate channels
+                        // 像素迭代器：遍历各通道
                         let channels = if let Some(ref chs) = self.options.channels {
                             chs.clone()
                         } else {
@@ -212,7 +212,7 @@ impl<'a> Checker<'a> {
         state: &mut CheckState,
         results: &mut Vec<DetectResult>,
     ) {
-        // byte iterator: 处理 bY, bX 等顺序
+        // 字节迭代器：处理 bY、bX 等顺序
         let bit_orders: Vec<BitOrder> = match self.options.bit_order {
             Some(order) => vec![order],
             None => vec![BitOrder::Lsb, BitOrder::Msb],
@@ -245,7 +245,7 @@ impl<'a> Checker<'a> {
             };
             local.bits = Some(vec![bits]);
             local.bit_order = Some(bo);
-            local.channels = None; // byte iterator 不使用 channels
+            local.channels = None; // 字节迭代器不使用通道
 
             let mut _title_out = String::new();
             let data = crate::extractor::extract(self.image, &local, &mut _title_out);
@@ -323,7 +323,7 @@ impl<'a> Checker<'a> {
                 println!("[same as {:?}]", cached_title);
                 return true;
             } else {
-                return false; // silent
+                return false; // 静默跳过重复项
             }
         }
 
@@ -331,7 +331,7 @@ impl<'a> Checker<'a> {
 
         let result = self.data2result(data, state);
 
-        // verbosity <= 0: 仅当找到非 OneChar 结果时输出
+        // 详细度 <= 0：仅当发现非单字符结果时才输出
         if self.options.verbose <= 0 {
             if let Some(ref r) = result
                 && !matches!(r, DetectResult::OneChar { .. })
@@ -344,14 +344,14 @@ impl<'a> Checker<'a> {
             return false;
         }
 
-        // verbosity > 0: 显示所有结果
+        // 详细度 > 0：显示所有结果
         if show_title_always || result.is_some() {
             self.show_title(title, true);
         }
 
         if let Some(r) = result {
             println!("{}", r);
-            // verbose 模式下显示 hexdump
+            // 详细模式下额外显示十六进制转储（hexdump）
             if self.options.verbose > 0 {
                 println!();
                 let dump = hexdump::dump(4, data, self.options.limit);
@@ -391,7 +391,7 @@ impl<'a> Checker<'a> {
 
     fn strings_first(data: &[u8], min_len: usize) -> Option<DetectResult> {
         // 在整个数据上搜索字符串（与原版行为一致）
-        // limit 参数只用于 hexdump 显示，不限制字符串搜索范围
+        // limit 参数只影响十六进制转储的显示长度，不限制字符串搜索范围
         let mut start = None;
         for (i, &b) in data.iter().enumerate() {
             let is_print = matches!(b, 0x20..=0x7e | b'\r' | b'\n' | b'\t');
@@ -453,12 +453,12 @@ impl<'a> Checker<'a> {
             return Some(r);
         }
 
-        // OpenStego 检测
+        // OpenStego 特征检测
         if let Some(r) = Self::check_openstego(data) {
             return Some(r);
         }
 
-        // WBStego 检测（只在特定条件下）
+        // WBStego 检测（仅在特定条件下触发）
         if self.options.bit_order == Some(crate::opts::BitOrder::Lsb)
             && let Some(r) =
                 Self::check_wbstego(data, self.image.format == crate::imageio::ImgFormat::Bmp)
@@ -466,7 +466,7 @@ impl<'a> Checker<'a> {
             return Some(r);
         }
 
-        // WholeText 检查应该在 file 命令之前，使用更低的最小长度 (min_str_len - 2)
+        // 整段文本检查应先于 file 命令，采用更小的最小长度（min_str_len - 2）
         let min_wholetext_len = self.options.min_str_len.saturating_sub(2);
         if let Some(r) = Self::whole_text_check(data, min_wholetext_len) {
             return Some(r);
@@ -487,7 +487,7 @@ impl<'a> Checker<'a> {
     }
 
     fn check_wbstego(data: &[u8], _is_bmp: bool) -> Option<DetectResult> {
-        // WBStego 格式检测
+        // WBStego 文件格式检测
         if data.len() < 4 {
             return None;
         }

@@ -24,95 +24,106 @@ enum BitOrder {
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "zsteg",
+    name = "misc_killer_picsteg_rs",
     version,
-    about = "detect stegano-hidden data in PNG & BMP"
+    about = "检测 PNG/BMP 图片中的隐写隐藏数据，并提供 CTF 图片隐写分析能力",
+    disable_help_flag = true,
+    disable_version_flag = true,
+    help_template = "{about}\n\n用法：\n  {usage}\n\n参数：\n{positionals}\n\n选项：\n{options}"
 )]
 struct Cli {
-    /// try all known methods
+    /// 显示帮助信息
+    #[arg(short = 'h', long = "help", action = ArgAction::Help)]
+    help: Option<bool>,
+
+    /// 显示版本号
+    #[arg(short = 'V', long = "version", action = ArgAction::Version)]
+    version: Option<bool>,
+
+    /// 尝试所有已知的扫描方法
     #[arg(short = 'a', long = "all", action = ArgAction::SetTrue)]
     all: bool,
 
-    /// extract specified payload, like '1b,rgb,lsb'
+    /// 提取指定载荷，参数示例：'1b,rgb,lsb'
     #[arg(short = 'E', long = "extract")]
     extract: Option<String>,
 
-    /// pixel iteration order: ALL,xy,yx,XY,YX,xY,Xy,bY,... (default: auto)
+    /// 像素遍历顺序：ALL、xy、yx、XY、YX、xY、Xy、bY 等（默认自动）
     #[arg(short = 'o', long = "order")]
     order: Option<String>,
 
-    /// channels (R/G/B/A) or any combination, comma separated
+    /// 通道（R/G/B/A）或任意组合，多个用逗号分隔
     #[arg(short = 'c', long = "channels")]
     channels: Option<String>,
 
-    /// number of bits, like 1 or '1,3,5' or range '1-8', supports mask '0x88'
+    /// 使用的位数，如 1、'1,3,5'、区间 '1-8'，也支持掩码 '0x88'
     #[arg(short = 'b', long = "bits")]
     bits: Option<String>,
 
-    /// least significant bit comes first
+    /// 最低有效位优先
     #[arg(long = "lsb", action = ArgAction::SetTrue)]
     lsb: bool,
 
-    /// most significant bit comes first
+    /// 最高有效位优先
     #[arg(long = "msb", action = ArgAction::SetTrue)]
     msb: bool,
 
-    /// analyze/extract only prime bytes/pixels
+    /// 仅分析/提取质数位置的字节或像素
     #[arg(short = 'P', long = "prime", action = ArgAction::SetTrue)]
     prime: bool,
 
-    /// prepend N zero bits
+    /// 在结果前补 N 个零比特
     #[arg(long = "shift")]
     shift: Option<usize>,
 
-    /// step
+    /// 步长
     #[arg(long = "step")]
     step: Option<usize>,
 
-    /// invert bits (XOR 0xff)
+    /// 反转比特（对每字节异或 0xff）
     #[arg(long = "invert", action = ArgAction::SetTrue)]
     invert: bool,
 
-    /// pixel-align hidden data
+    /// 按像素对齐隐藏数据
     #[arg(long = "pixel-align", action = ArgAction::SetTrue)]
     pixel_align: bool,
 
-    /// limit bytes checked, 0 = no limit (default: 256)
+    /// 限制检查的字节数，0 表示不限制（默认 256）
     #[arg(short = 'l', long = "limit")]
     limit: Option<usize>,
 
-    /// use 'file' command to detect data type (default: YES)
+    /// 是否调用系统 'file' 命令识别数据类型（默认开启）
     #[arg(long = "file", action = ArgAction::Set, default_value_t = true)]
     file_cmd: bool,
 
-    /// disable ASCII strings finding (default: enabled)
+    /// 关闭 ASCII 字符串发现（默认开启）
     #[arg(long = "no-strings", action = ArgAction::SetTrue)]
     no_strings: bool,
 
-    /// ASCII strings find mode: first, all, longest, none (default: first)
+    /// 字符串发现模式：first、all、longest、none（默认 first）
     #[arg(short = 's', long = "strings")]
     strings: Option<String>,
 
-    /// minimum string length (default: 8)
+    /// 字符串最小长度（默认 8）
     #[arg(short = 'n', long = "min-str-len")]
     min_str_len: Option<usize>,
 
-    /// Run verbosely (can be used multiple times)
+    /// 详细输出（可重复使用以提升详细度）
     #[arg(short = 'v', long = "verbose", action = ArgAction::Count)]
     verbose: u8,
 
-    /// Silent any warnings (can be used multiple times)
+    /// 静默警告信息（可重复使用）
     #[arg(short = 'q', long = "quiet", action = ArgAction::Count)]
     quiet: u8,
 
-    /// Force (or disable) color output (default: auto)
+    /// 强制开启或关闭彩色输出（默认自动）
     #[arg(short = 'C', long = "color")]
     color: Option<bool>,
 
-    /// filename.png [param_string]
+    /// 输入图片文件名
     input: PathBuf,
 
-    /// optional param_string shortcut like "2b,b,lsb,xy"
+    /// 可选的参数字符串快捷方式，如 "2b,b,lsb,xy"
     param_string: Option<String>,
 
     /// 启用 OpenStego 字典爆破模式
@@ -272,8 +283,8 @@ fn main() -> anyhow::Result<()> {
 
             // 提取模式：如果 limit 是默认值，则使用无限制（与原版行为一致）
             if final_opts.limit == 256 {
-                // DEFAULT_LIMIT
-                final_opts.limit = 0; // 0 means no limit in extractor
+                // 默认上限值
+                final_opts.limit = 0; // 0 在提取器中表示不限制
             }
 
             let mut title = String::new();
@@ -286,7 +297,7 @@ fn main() -> anyhow::Result<()> {
             if std::io::Read::read_to_end(&mut dec, &mut out).is_ok() {
                 print!("{}", String::from_utf8_lossy(&out));
             } else {
-                eprintln!("cannot decompress with zlib");
+                eprintln!("无法使用 zlib 解压");
             }
         } else {
             std::io::stdout().write_all(&data)?;

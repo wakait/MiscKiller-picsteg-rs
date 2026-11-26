@@ -17,6 +17,7 @@ impl FileCmd {
 
     pub fn data2result(&mut self, data: &[u8]) -> Option<DetectResult> {
         const MIN_DATA_SIZE: usize = 5;
+        // 以下字符串需与外部 file 命令的英文输出逐字匹配，因此不可翻译
         const IGNORES: &[&str] = &[
             "data",
             "empty",

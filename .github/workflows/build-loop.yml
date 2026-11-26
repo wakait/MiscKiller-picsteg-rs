@@ -42,40 +42,40 @@ jobs:
             exe: misc_killer_picsteg_rs
 
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
           components: rustfmt, clippy
 
-      - name: Cache cargo
+      - name: 缓存 cargo 依赖
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
 
-      - name: Install musl tools (linux)
+      - name: 安装 musl 工具（仅 Linux）
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - name: Format check (linux)
+      - name: 代码格式检查（仅 Linux）
         if: matrix.os == 'ubuntu-latest'
         run: cargo fmt --all -- --check
 
-      - name: Clippy (linux)
+      - name: 静态检查 Clippy（仅 Linux）
         if: matrix.os == 'ubuntu-latest'
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Test (linux)
+      - name: 单元测试（仅 Linux）
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --verbose
 
-      - name: Build dev-release
+      - name: 以 dev-release 配置构建
         run: cargo build --profile dev-release --target ${{ matrix.target }} --verbose
 
-      - name: Upload artifact
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
