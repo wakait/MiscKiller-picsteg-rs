@@ -1,5 +1,6 @@
 name: 发布构建
 
+# 推送 v* 标签时触发，构建多平台 release 二进制并创建 GitHub 发布
 on:
   push:
     tags:
@@ -11,41 +12,35 @@ permissions:
 
 jobs:
   build:
-    name: 构建 ${{ matrix.target }}
+    name: 构建 ${{ matrix.asset }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Windows x86_64（MSVC）
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: misc_killer_picsteg_rs-windows-x86_64.exe
+            exe: misc_killer_picsteg_rs.exe
+
           # Linux x86_64（musl 静态链接）
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            artifact_name: misc_killer_picsteg_rs
-            asset_name: misc_killer_picsteg_rs-linux-x86_64
+            asset: misc_killer_picsteg_rs-linux-x86_64
+            exe: misc_killer_picsteg_rs
 
-          # Linux ARM64（musl 静态链接）
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-musl
-            artifact_name: misc_killer_picsteg_rs
-            asset_name: misc_killer_picsteg_rs-linux-aarch64
-
-          # macOS x86_64（Intel 芯片）
-          - os: macos-latest
+          # macOS x86_64（Intel 芯片，使用 macos-13  runner）
+          - os: macos-13
             target: x86_64-apple-darwin
-            artifact_name: misc_killer_picsteg_rs
-            asset_name: misc_killer_picsteg_rs-macos-x86_64
+            asset: misc_killer_picsteg_rs-macos-x86_64
+            exe: misc_killer_picsteg_rs
 
-          # macOS ARM64（Apple Silicon 芯片）
+          # macOS ARM64（Apple Silicon 芯片，macos-latest 现为 ARM runner）
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: misc_killer_picsteg_rs
-            asset_name: misc_killer_picsteg_rs-macos-aarch64
-
-          # Windows x86_64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: misc_killer_picsteg_rs.exe
-            asset_name: misc_killer_picsteg_rs-windows-x86_64.exe
+            asset: misc_killer_picsteg_rs-macos-aarch64
+            exe: misc_killer_picsteg_rs
 
     steps:
       - name: 检出代码
@@ -55,60 +50,55 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: rustfmt, clippy
 
-      - name: 安装 musl 工具
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-
-          # 安装 cross 用于 ARM64 交叉编译
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
-            cargo install cross --git https://github.com/cross-rs/cross || true
-          fi
-
-      - name: 配置 cargo 缓存
+      - name: 缓存 cargo 依赖
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
 
-      - name: 构建 release 二进制（ARM64 Linux）
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          cargo install cross --git https://github.com/cross-rs/cross || true
-          cross build --release --target ${{ matrix.target }}
+      - name: 安装 musl 工具（仅 Linux）
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - name: 构建 release 二进制（其他平台）
-        if: matrix.target != 'aarch64-unknown-linux-musl'
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: 代码格式检查（仅 Linux）
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all -- --check
 
-      - name: 剥离符号（Linux x86_64 / macOS）
-        if: matrix.os != 'windows-latest' && matrix.target != 'aarch64-unknown-linux-musl'
-        run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+      - name: 静态检查 Clippy（仅 Linux）
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
-      # ARM64 Linux 使用 cross 构建，容器内已自动剥离符号，无需额外处理
-      # .cargo/config.toml 中也已配置 strip = true
+      - name: 单元测试（仅 Linux）
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --verbose
+
+      - name: 以 release 配置构建
+        run: cargo build --release --target ${{ matrix.target }} --verbose
+
+      - name: 剥离符号（Linux / macOS）
+        if: matrix.os != 'windows-latest'
+        run: strip target/${{ matrix.target }}/release/${{ matrix.exe }}
 
       - name: 准备构建产物
         shell: bash
         run: |
           mkdir -p artifacts
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} artifacts/${{ matrix.asset_name }}
-          else
-            cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} artifacts/${{ matrix.asset_name }}
-            chmod +x artifacts/${{ matrix.asset_name }}
+          cp target/${{ matrix.target }}/release/${{ matrix.exe }} artifacts/${{ matrix.asset }}
+          if [ "${{ matrix.os }}" != "windows-latest" ]; then
+            chmod +x artifacts/${{ matrix.asset }}
           fi
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: artifacts/${{ matrix.asset_name }}
+          name: ${{ matrix.asset }}
+          path: artifacts/${{ matrix.asset }}
           if-no-files-found: error
+          retention-days: 30
 
   release:
-    name: 创建发布
+    name: 创建 GitHub 发布
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
@@ -122,19 +112,19 @@ jobs:
         with:
           path: artifacts
 
-      - name: 生成校验和
+      - name: 生成 SHA256 校验和
         run: |
           cd artifacts
           for dir in */; do
-            cd "$dir"
-            for file in *; do
-              sha256sum "$file" > "$file.sha256"
-            done
-            cd ..
+            (cd "$dir" && for file in *; do
+              if [[ "$file" != *.sha256 ]]; then
+                sha256sum "$file" > "$file.sha256"
+              fi
+            done)
           done
 
-      - name: 创建 GitHub 发布
-        uses: softprops/action-gh-release@v1
+      - name: 创建发布并上传附件
+        uses: softprops/action-gh-release@v2
         with:
           draft: false
           prerelease: false
@@ -143,4 +133,3 @@ jobs:
             artifacts/*/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
