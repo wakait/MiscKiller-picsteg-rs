@@ -10,7 +10,9 @@ mod extractor;
 mod file_cmd;
 mod hexdump;
 mod imageio;
+mod metadata;
 mod result;
+mod strings;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, ValueEnum)]
 enum BitOrder {
@@ -122,6 +124,18 @@ struct Cli {
     /// 命中后将明文写入该文件（配合 --crack）
     #[arg(long = "crack-out")]
     crack_out: Option<PathBuf>,
+
+    /// 对整个文件原始字节扫描明文字符串（ASCII/UTF-16LE），独立于 LSB 分析
+    #[arg(long = "strings-scan", action = ArgAction::SetTrue)]
+    strings_scan: bool,
+
+    /// strings 扫描的最小长度（默认 4）
+    #[arg(long = "strings-min", default_value_t = 4)]
+    strings_min: usize,
+
+    /// 仅输出图片元数据（PNG 文本块 / JPEG EXIF、XMP、COM 注释等）
+    #[arg(long = "meta", action = ArgAction::SetTrue)]
+    meta: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -134,6 +148,16 @@ fn main() -> anyhow::Result<()> {
     // 口令爆破模式：独立于原有检测/提取流程
     if cli.crack {
         return run_crack(&cli);
+    }
+
+    // 元数据检查模式（exiftool 类）
+    if cli.meta {
+        return run_meta(&cli);
+    }
+
+    // 全文件明文字符串扫描模式（strings 类）
+    if cli.strings_scan {
+        return run_strings_scan(&cli);
     }
 
     // 解析选项：先默认，再合并 CLI，再合并 param_string（与 Ruby 行为一致：行内覆盖）
@@ -306,4 +330,48 @@ fn run_crack(cli: &Cli) -> anyhow::Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+/// 元数据检查：输出 PNG 文本块与 JPEG EXIF/XMP/COM 等结构化标签
+fn run_meta(cli: &Cli) -> anyhow::Result<()> {
+    let raw = std::fs::read(&cli.input)?;
+    // 图片可正常解码时拿到 PNG 文本块等结构化信息；解码失败也回退到纯字节扫描
+    let tags = match imageio::Image::load(&cli.input) {
+        Ok(img) => metadata::collect(&img, &cli.input),
+        Err(_) => metadata::collect_from_raw(&raw),
+    };
+    if tags.is_empty() {
+        println!("[-] 未发现可读元数据标签");
+        return Ok(());
+    }
+    println!("[i] 共 {} 条元数据标签：", tags.len());
+    for t in &tags {
+        println!("  [{:<16}] {:<14} = {}", t.source, t.key, t.value);
+    }
+    Ok(())
+}
+
+/// 全文件明文字符串扫描（对标 strings）
+fn run_strings_scan(cli: &Cli) -> anyhow::Result<()> {
+    let raw = std::fs::read(&cli.input)?;
+    let cfg = strings::StringsConfig {
+        min_len: cli.strings_min,
+        utf16: true,
+    };
+    let hits = strings::scan(&raw, &cfg);
+    if hits.is_empty() {
+        println!("[-] 未发现长度 >= {} 的明文字符串", cli.strings_min);
+        return Ok(());
+    }
+    println!("[i] 共 {} 条字符串：", hits.len());
+    for h in &hits {
+        let enc = match h.encoding {
+            strings::Encoding::Ascii => "ASCII",
+            strings::Encoding::Utf16Le => "UTF16",
+        };
+        // 单行化，避免多行字符串破坏输出对齐
+        let line = h.text.replace(['\n', '\r', '\t'], " ");
+        println!("  {:>10}  {:<6}  {}", h.offset, enc, line);
+    }
+    Ok(())
 }

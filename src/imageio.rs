@@ -8,8 +8,7 @@ use std::path::Path;
 pub enum ImgFormat {
     Png,
     Bmp,
-    #[allow(dead_code)]
-    Unknown,
+    Jpeg,
 }
 
 #[derive(Debug, Clone)]
@@ -41,12 +40,13 @@ impl Image {
         match ext.as_str() {
             "png" => Self::load_png(path_ref),
             "bmp" => Self::load_bmp(path_ref),
+            "jpg" | "jpeg" => Self::load_jpeg(path_ref),
             _ => Self::load_auto(path_ref),
         }
     }
 
     fn load_auto(path: &Path) -> Result<Self> {
-        // 简易魔数检测 PNG，否则尝试 BMP
+        // 简易魔数检测 PNG/JPEG，否则尝试 BMP
         let mut f = File::open(path).with_context(|| format!("open {:?}", path))?;
         let mut sig = [0u8; 8];
         let n = f.read(&mut sig)?;
@@ -54,7 +54,29 @@ impl Image {
         if n >= 8 && &sig == b"\x89PNG\r\n\x1a\n" {
             return Self::load_png(path);
         }
+        if n >= 3 && sig[0..2] == [0xFF, 0xD8] {
+            return Self::load_jpeg(path);
+        }
         Self::load_bmp(path)
+    }
+
+    /// JPEG 解码：image crate 提供像素；imagedata 保留原始文件字节，
+    /// 供元数据/雕刻/strings 等基于原始字节的分析使用（JPEG 无 LSB 扫描线）。
+    fn load_jpeg(path: &Path) -> Result<Self> {
+        let img = image::open(path).with_context(|| "decode jpeg")?;
+        let rgba = img.to_rgba8();
+        let (w, h) = rgba.dimensions();
+        let raw = std::fs::read(path).with_context(|| "read jpeg bytes")?;
+        Ok(Self {
+            format: ImgFormat::Jpeg,
+            width: w,
+            height: h,
+            imagedata: raw,
+            pixels: rgba.to_vec(),
+            metadata: HashMap::new(),
+            chunks: Vec::new(),
+            extradata: Vec::new(),
+        })
     }
 
     fn load_bmp(path: &Path) -> Result<Self> {
