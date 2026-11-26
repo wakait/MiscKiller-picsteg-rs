@@ -1,15 +1,31 @@
 [package]
-name = "zsteg-rust"
+name = "misc_killer_picsteg_rs"
 version = "0.1.0"
 edition = "2024"
+description = "CTF picture steganography all-in-one toolkit (LSB, crack, carve, metadata)"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
-thiserror = "1.0"
 image = { version = "0.25", default-features = false, features = ["png", "bmp"] }
-png = "0.17"
 flate2 = { version = "1.0", features = ["zlib"] }
 colored = "2.1"
-regex = "1.10"
-byteorder = "1.5"
+# OpenStego 字典爆破：PBKDF2-HMAC-SHA256 + AES-CBC（simple 特性提供 pbkdf2_hmac）
+pbkdf2 = { version = "0.12", features = ["simple"] }
+hmac = "0.12"
+sha2 = "0.10"
+aes = "0.8"
+cbc = "0.1"
+cipher = { version = "0.4", features = ["block-padding"] }
+
+# 云端构建闭环专用：接近 release 性能，但保留调试符号与行号，
+# 配合 RUST_BACKTRACE=1 可在云端/本地复现 panic 时定位到源码行。
+[profile.dev-release]
+inherits = "release"
+opt-level = 2
+debug = true
+debug-assertions = true
+lto = false
+codegen-units = 16
+strip = false
+panic = "unwind"

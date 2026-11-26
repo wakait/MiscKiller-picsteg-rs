@@ -20,32 +20,32 @@ jobs:
           # Linux x86_64 (静态链接 musl)
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            artifact_name: zsteg-rust
-            asset_name: zsteg-rust-linux-x86_64
+            artifact_name: misc_killer_picsteg_rs
+            asset_name: misc_killer_picsteg_rs-linux-x86_64
           
           # Linux ARM64 (静态链接 musl)
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            artifact_name: zsteg-rust
-            asset_name: zsteg-rust-linux-aarch64
+            artifact_name: misc_killer_picsteg_rs
+            asset_name: misc_killer_picsteg_rs-linux-aarch64
           
           # macOS x86_64
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact_name: zsteg-rust
-            asset_name: zsteg-rust-macos-x86_64
+            artifact_name: misc_killer_picsteg_rs
+            asset_name: misc_killer_picsteg_rs-macos-x86_64
           
           # macOS ARM64 (Apple Silicon)
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: zsteg-rust
-            asset_name: zsteg-rust-macos-aarch64
+            artifact_name: misc_killer_picsteg_rs
+            asset_name: misc_killer_picsteg_rs-macos-aarch64
           
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: zsteg-rust.exe
-            asset_name: zsteg-rust-windows-x86_64.exe
+            artifact_name: misc_killer_picsteg_rs.exe
+            asset_name: misc_killer_picsteg_rs-windows-x86_64.exe
 
     steps:
       - name: Checkout code

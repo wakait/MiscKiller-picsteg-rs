@@ -1,0 +1,84 @@
+name: build-loop
+
+# 云端构建闭环：仅在开发分支推送时触发，main/master 不受影响。
+# 产物供 loop_driver.sh fetch_run 拉取并在本地受控运行。
+on:
+  push:
+    branches:
+      - dev
+      - 'agent/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-loop:
+    name: ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: misc_killer_picsteg_rs-windows-x86_64.exe
+            exe: misc_killer_picsteg_rs.exe
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: misc_killer_picsteg_rs-linux-x86_64
+            exe: misc_killer_picsteg_rs
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: misc_killer_picsteg_rs-macos-x86_64
+            exe: misc_killer_picsteg_rs
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset: misc_killer_picsteg_rs-macos-aarch64
+            exe: misc_killer_picsteg_rs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install musl tools (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Format check (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --verbose
+
+      - name: Build dev-release
+        run: cargo build --profile dev-release --target ${{ matrix.target }} --verbose
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: target/${{ matrix.target }}/dev-release/${{ matrix.exe }}
+          if-no-files-found: error
+          retention-days: 14

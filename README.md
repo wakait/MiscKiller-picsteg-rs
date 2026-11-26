@@ -1,7 +1,7 @@
-# zsteg-rust
+# misc_killer_picsteg_rs
 
-[![CI](https://github.com/jiayuqi7813/zsteg-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/jiayuqi7813/zsteg-rust/actions/workflows/ci.yml)
-[![Release](https://github.com/jiayuqi7813/zsteg-rust/actions/workflows/release.yml/badge.svg)](https://github.com/jiayuqi7813/zsteg-rust/actions/workflows/release.yml)
+[![CI](https://github.com/wakait/MiscKiller-picsteg-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/wakait/MiscKiller-picsteg-rs/actions/workflows/ci.yml)
+[![Release](https://github.com/wakait/MiscKiller-picsteg-rs/actions/workflows/release.yml/badge.svg)](https://github.com/wakait/MiscKiller-picsteg-rs/actions/workflows/release.yml)
 
 A complete Rust rewrite of zsteg with functionality almost identical to the [original Ruby zsteg](https://github.com/zed-0xff/zsteg) (missing features can be requested via issues).
 
@@ -12,23 +12,23 @@ A complete Rust rewrite of zsteg with functionality almost identical to the [ori
 
 ### Download from Releases
 
-Visit the [Releases](https://github.com/jiayuqi7813/zsteg-rust/releases) page to download pre-compiled binaries for your platform:
+Visit the [Releases](https://github.com/wakait/MiscKiller-picsteg-rs/releases) page to download pre-compiled binaries for your platform:
 
-- **Linux**: `zsteg-rust-linux-x86_64` or `zsteg-rust-linux-aarch64`
-- **macOS**: `zsteg-rust-macos-x86_64` or `zsteg-rust-macos-aarch64` (Apple Silicon)
-- **Windows**: `zsteg-rust-windows-x86_64.exe`
+- **Linux**: `misc_killer_picsteg_rs-linux-x86_64` or `misc_killer_picsteg_rs-linux-aarch64`
+- **macOS**: `misc_killer_picsteg_rs-macos-x86_64` or `misc_killer_picsteg_rs-macos-aarch64` (Apple Silicon)
+- **Windows**: `misc_killer_picsteg_rs-windows-x86_64.exe`
 
 After downloading, add execute permissions (Linux/macOS):
 ```bash
-chmod +x zsteg-rust-*
+chmod +x misc_killer_picsteg_rs-*
 ```
 
 ### Build from Source
 
 ```bash
-cd zsteg-rust
+cd misc_killer_picsteg_rs
 cargo build --release
-./target/release/zsteg-rust <image.png>
+./target/release/misc_killer_picsteg_rs <image.png>
 ```
 
 ## Usage
@@ -37,13 +37,13 @@ Basic usage is identical to the original:
 
 ```bash
 # Default check
-./target/release/zsteg-rust image.png
+./target/release/misc_killer_picsteg_rs image.png
 
 # Try all methods
-./target/release/zsteg-rust -a image.png
+./target/release/misc_killer_picsteg_rs -a image.png
 
 # Extract data
-./target/release/zsteg-rust -E "1b,rgb,lsb" image.png > output.bin
+./target/release/misc_killer_picsteg_rs -E "1b,rgb,lsb" image.png > output.bin
 ```
 
 ## Feature Alignment
@@ -61,7 +61,7 @@ Basic usage is identical to the original:
 ## Examples
 
 ```bash
-❯ ./target/release/zsteg-rust ../zsteg/samples/flower_rgb3.png
+❯ ./target/release/misc_killer_picsteg_rs ../zsteg/samples/flower_rgb3.png
 imagedata           .. file: 370 XA sysV pure executable not stripped - version 768
 b3,rgb,lsb,xy       .. text: "SuperSecretMessage"
 ```

@@ -3,19 +3,27 @@ use colored::*;
 use std::path::PathBuf;
 
 mod opts;
-use opts::{decode_param_string, merge_cli_into_options, Options};
-mod imageio;
+use opts::{Options, decode_param_string, merge_cli_into_options};
 mod checker;
+mod crack;
 mod extractor;
-mod result;
-mod hexdump;
 mod file_cmd;
+mod hexdump;
+mod imageio;
+mod result;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, ValueEnum)]
-enum BitOrder { Lsb, Msb }
+enum BitOrder {
+    Lsb,
+    Msb,
+}
 
 #[derive(Parser, Debug)]
-#[command(name = "zsteg", version, about = "detect stegano-hidden data in PNG & BMP")] 
+#[command(
+    name = "zsteg",
+    version,
+    about = "detect stegano-hidden data in PNG & BMP"
+)]
 struct Cli {
     /// try all known methods
     #[arg(short = 'a', long = "all", action = ArgAction::SetTrue)]
@@ -102,12 +110,31 @@ struct Cli {
 
     /// optional param_string shortcut like "2b,b,lsb,xy"
     param_string: Option<String>,
+
+    /// 启用 OpenStego 字典爆破模式
+    #[arg(long = "crack", action = ArgAction::SetTrue)]
+    crack: bool,
+
+    /// 爆破字典文件，每行一个候选密码（配合 --crack）
+    #[arg(long = "wordlist")]
+    wordlist: Option<PathBuf>,
+
+    /// 命中后将明文写入该文件（配合 --crack）
+    #[arg(long = "crack-out")]
+    crack_out: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    if let Some(force) = cli.color { colored::control::set_override(force); }
+    if let Some(force) = cli.color {
+        colored::control::set_override(force);
+    }
+
+    // 口令爆破模式：独立于原有检测/提取流程
+    if cli.crack {
+        return run_crack(&cli);
+    }
 
     // 解析选项：先默认，再合并 CLI，再合并 param_string（与 Ruby 行为一致：行内覆盖）
     let mut options = Options::default();
@@ -115,13 +142,27 @@ fn main() -> anyhow::Result<()> {
     if let Some(ps) = &cli.param_string {
         let o2 = decode_param_string(ps)?;
         // 简单字段按优先级覆盖
-        if o2.bit_order.is_some() { options.bit_order = o2.bit_order; }
-        if o2.bits.is_some() { options.bits = o2.bits; }
-        if !matches!(o2.order, opts::OrderSpec::Auto) { options.order = o2.order; }
-        if o2.channels.is_some() { options.channels = o2.channels; }
-        if !matches!(o2.pixel_align, opts::PixelAlignSpec::None) { options.pixel_align = o2.pixel_align; }
-        if !matches!(o2.prime, opts::PrimeSpec::None) { options.prime = o2.prime; }
-        if o2.zlib_flag { options.zlib_flag = true; }
+        if o2.bit_order.is_some() {
+            options.bit_order = o2.bit_order;
+        }
+        if o2.bits.is_some() {
+            options.bits = o2.bits;
+        }
+        if !matches!(o2.order, opts::OrderSpec::Auto) {
+            options.order = o2.order;
+        }
+        if o2.channels.is_some() {
+            options.channels = o2.channels;
+        }
+        if !matches!(o2.pixel_align, opts::PixelAlignSpec::None) {
+            options.pixel_align = o2.pixel_align;
+        }
+        if !matches!(o2.prime, opts::PrimeSpec::None) {
+            options.prime = o2.prime;
+        }
+        if o2.zlib_flag {
+            options.zlib_flag = true;
+        }
         options.extra_checks &= o2.extra_checks; // 任一侧关闭则关闭
     }
 
@@ -137,7 +178,10 @@ fn main() -> anyhow::Result<()> {
             let parts: Vec<&str> = expr.split(':').collect();
             if parts.len() >= 2 {
                 let idx: usize = parts[1].parse()?;
-                img.chunks.get(idx).map(|c| c.data.clone()).unwrap_or_default()
+                img.chunks
+                    .get(idx)
+                    .map(|c| c.data.clone())
+                    .unwrap_or_default()
             } else {
                 Vec::new()
             }
@@ -145,35 +189,46 @@ fn main() -> anyhow::Result<()> {
             // 普通参数字符串，如 "b1,r,lsb,xy"
             let extract_opts = decode_param_string(expr)?;
             let mut final_opts = options.clone();
-            if extract_opts.bit_order.is_some() { final_opts.bit_order = extract_opts.bit_order; }
-            if extract_opts.bits.is_some() { final_opts.bits = extract_opts.bits; }
-            if !matches!(extract_opts.order, opts::OrderSpec::Auto) { final_opts.order = extract_opts.order; }
-            if extract_opts.channels.is_some() { final_opts.channels = extract_opts.channels; }
-            if !matches!(extract_opts.prime, opts::PrimeSpec::None) { final_opts.prime = extract_opts.prime; }
-            
+            if extract_opts.bit_order.is_some() {
+                final_opts.bit_order = extract_opts.bit_order;
+            }
+            if extract_opts.bits.is_some() {
+                final_opts.bits = extract_opts.bits;
+            }
+            if !matches!(extract_opts.order, opts::OrderSpec::Auto) {
+                final_opts.order = extract_opts.order;
+            }
+            if extract_opts.channels.is_some() {
+                final_opts.channels = extract_opts.channels;
+            }
+            if !matches!(extract_opts.prime, opts::PrimeSpec::None) {
+                final_opts.prime = extract_opts.prime;
+            }
+
             // 提取模式：如果 limit 是默认值，则使用无限制（与原版行为一致）
-            if final_opts.limit == 256 { // DEFAULT_LIMIT
+            if final_opts.limit == 256 {
+                // DEFAULT_LIMIT
                 final_opts.limit = 0; // 0 means no limit in extractor
             }
-            
+
             let mut title = String::new();
             extractor::extract(&img, &final_opts, &mut title)
         };
-        
+
         if options.zlib_flag {
             let mut dec = flate2::read::ZlibDecoder::new(&data[..]);
             let mut out = Vec::new();
-            if let Ok(_) = std::io::Read::read_to_end(&mut dec, &mut out) { 
-                print!("{}", String::from_utf8_lossy(&out)); 
-            } else { 
-                eprintln!("cannot decompress with zlib"); 
+            if std::io::Read::read_to_end(&mut dec, &mut out).is_ok() {
+                print!("{}", String::from_utf8_lossy(&out));
+            } else {
+                eprintln!("cannot decompress with zlib");
             }
         } else {
             std::io::stdout().write_all(&data)?;
         }
         return Ok(());
     }
-    
+
     // 正常检查模式
     if options.verbose >= 0 {
         println!("{} {}", "[.]".green(), cli.input.display());
@@ -183,4 +238,72 @@ fn main() -> anyhow::Result<()> {
     let _ = c.check();
 
     Ok(())
+}
+
+/// 执行 OpenStego 字典爆破
+fn run_crack(cli: &Cli) -> anyhow::Result<()> {
+    let wordlist = cli
+        .wordlist
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("--crack 模式必须提供 --wordlist <字典文件>"))?;
+
+    // OpenStego 标准载荷固定使用 1b,rgb,lsb,xy
+    let mut opts = decode_param_string("1b,rgb,lsb,xy")?;
+    opts.limit = 0;
+
+    let img = imageio::Image::load(&cli.input)?;
+    let hit = crack::crack_openstego(&img, wordlist, &opts)?;
+
+    match hit {
+        Some(hit) => {
+            // 若载荷声明压缩，输出解压后的真实文件
+            let payload =
+                crack::parse_openstego(&extractor::extract(&img, &opts, &mut String::new()));
+            let final_bytes = if payload.map(|p| p.compress).unwrap_or(false) {
+                use flate2::read::ZlibDecoder;
+                use std::io::Read;
+                let mut dec = ZlibDecoder::new(&hit.plaintext[..]);
+                let mut out = Vec::new();
+                if dec.read_to_end(&mut out).is_ok() && !out.is_empty() {
+                    out
+                } else {
+                    hit.plaintext.clone()
+                }
+            } else {
+                hit.plaintext.clone()
+            };
+
+            println!(
+                "[+] password={:?} AES-{} 明文 {} 字节",
+                hit.password,
+                hit.key_bits,
+                final_bytes.len()
+            );
+
+            if let Some(out_path) = &cli.crack_out {
+                std::fs::write(out_path, &final_bytes)?;
+                println!("[i] 明文已写入 {:?}", out_path);
+            } else {
+                // 默认打印可打印预览，避免二进制刷屏
+                let preview: String = final_bytes
+                    .iter()
+                    .take(256)
+                    .map(|&b| {
+                        if (0x20..=0x7e).contains(&b) || b == b'\n' || b == b'\r' || b == b'\t' {
+                            b as char
+                        } else {
+                            '.'
+                        }
+                    })
+                    .collect();
+                println!("----- 明文预览 -----");
+                println!("{preview}");
+            }
+            Ok(())
+        }
+        None => {
+            eprintln!("[-] 未找到正确密码");
+            std::process::exit(1);
+        }
+    }
 }

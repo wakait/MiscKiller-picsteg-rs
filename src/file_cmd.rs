@@ -1,6 +1,6 @@
 use crate::result::DetectResult;
-use std::process::{Command, Stdio};
 use std::io::Write;
+use std::process::{Command, Stdio};
 
 pub struct FileCmd {
     enabled: bool,
@@ -8,7 +8,11 @@ pub struct FileCmd {
 
 impl FileCmd {
     pub fn new(enabled: bool) -> Option<Self> {
-        if enabled { Some(Self { enabled }) } else { None }
+        if enabled {
+            Some(Self { enabled })
+        } else {
+            None
+        }
     }
 
     pub fn data2result(&mut self, data: &[u8]) -> Option<DetectResult> {
@@ -31,9 +35,11 @@ impl FileCmd {
             "AmigaOS bitmap font",
             "a python script text executable",
         ];
-        
-        if !self.enabled || data.len() < MIN_DATA_SIZE { return None; }
-        
+
+        if !self.enabled || data.len() < MIN_DATA_SIZE {
+            return None;
+        }
+
         // 直接用 file -b 获取描述（不使用 --mime-type）
         let mut child = Command::new("file")
             .arg("-b")
@@ -49,10 +55,14 @@ impl FileCmd {
         }
 
         let output = child.wait_with_output().ok()?;
-        if !output.status.success() { return None; }
+        if !output.status.success() {
+            return None;
+        }
 
         let desc = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if desc.is_empty() { return None; }
+        if desc.is_empty() {
+            return None;
+        }
 
         // 检查是否在忽略列表中（以这些字符串开头）
         for ignore in IGNORES {
@@ -64,5 +74,3 @@ impl FileCmd {
         Some(DetectResult::FileType(desc))
     }
 }
-
-

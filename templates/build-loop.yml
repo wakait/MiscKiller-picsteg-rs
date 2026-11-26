@@ -1,0 +1,98 @@
+# =============================================================================
+# build-loop.yml —— Rust 云端构建闭环工作流模板（权威母版）
+#
+# 用途：在开发分支（dev / agent/**）推送时，跨平台以 dev-release profile 构建，
+#       产物供 .claude/skills/rust-ci-dev-loop/scripts/loop_driver.sh 拉取验证。
+#
+# 新项目脚手架接入步骤：
+#   1. 复制本文件到 .github/workflows/build-loop.yml
+#   2. 按实际二进制名替换 matrix.include[*].exe / asset（搜索 misc_killer_picsteg_rs）
+#   3. 按需裁剪 matrix 平台矩阵
+#   4. 确认 Cargo.toml 已含 [profile.dev-release]（保留 debug=true、行号）
+#
+# 安全红线：本工作流只监听 dev / agent/**，绝不监听 main/master。
+# =============================================================================
+name: build-loop
+
+on:
+  push:
+    branches:
+      - dev
+      - 'agent/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-loop:
+    name: ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 二进制名按项目替换：asset（产物名）/ exe（target 目录内文件名）
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: misc_killer_picsteg_rs-windows-x86_64.exe
+            exe: misc_killer_picsteg_rs.exe
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: misc_killer_picsteg_rs-linux-x86_64
+            exe: misc_killer_picsteg_rs
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: misc_killer_picsteg_rs-macos-x86_64
+            exe: misc_killer_picsteg_rs
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset: misc_killer_picsteg_rs-macos-aarch64
+            exe: misc_killer_picsteg_rs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install musl tools (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      # 门禁仅在单平台（linux）执行，避免重复；本地 loop_driver.sh precheck 同样覆盖
+      - name: Format check (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --verbose
+
+      - name: Build dev-release
+        run: cargo build --profile dev-release --target ${{ matrix.target }} --verbose
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: target/${{ matrix.target }}/dev-release/${{ matrix.exe }}
+          if-no-files-found: error
+          retention-days: 14

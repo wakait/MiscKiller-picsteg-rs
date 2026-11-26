@@ -1,7 +1,7 @@
-# zsteg-rust
+# misc_killer_picsteg_rs
 
-[![CI](https://github.com/jiayuqi7813/zsteg-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/jiayuqi7813/zsteg-rust/actions/workflows/ci.yml)
-[![Release](https://github.com/jiayuqi7813/zsteg-rust/actions/workflows/release.yml/badge.svg)](https://github.com/jiayuqi7813/zsteg-rust/actions/workflows/release.yml)
+[![CI](https://github.com/wakait/MiscKiller-picsteg-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/wakait/MiscKiller-picsteg-rs/actions/workflows/ci.yml)
+[![Release](https://github.com/wakait/MiscKiller-picsteg-rs/actions/workflows/release.yml/badge.svg)](https://github.com/wakait/MiscKiller-picsteg-rs/actions/workflows/release.yml)
 
 zsteg的完整Rust重写版本，功能与[原版Ruby zsteg](https://github.com/zed-0xff/zsteg)几乎完全相同（缺失功能可通过issues请求）。
 
@@ -11,23 +11,23 @@ zsteg的完整Rust重写版本，功能与[原版Ruby zsteg](https://github.com/
 
 ### 从发布页面下载
 
-访问[发布页面](https://github.com/jiayuqi7813/zsteg-rust/releases)下载适合你平台的预编译二进制文件：
+访问[发布页面](https://github.com/wakait/MiscKiller-picsteg-rs/releases)下载适合你平台的预编译二进制文件：
 
-- **Linux**: `zsteg-rust-linux-x86_64` 或 `zsteg-rust-linux-aarch64`
-- **macOS**: `zsteg-rust-macos-x86_64` 或 `zsteg-rust-macos-aarch64` (Apple Silicon)
-- **Windows**: `zsteg-rust-windows-x86_64.exe`
+- **Linux**: `misc_killer_picsteg_rs-linux-x86_64` 或 `misc_killer_picsteg_rs-linux-aarch64`
+- **macOS**: `misc_killer_picsteg_rs-macos-x86_64` 或 `misc_killer_picsteg_rs-macos-aarch64` (Apple Silicon)
+- **Windows**: `misc_killer_picsteg_rs-windows-x86_64.exe`
 
 下载后，添加执行权限（Linux/macOS）：
 ```bash
-chmod +x zsteg-rust-*
+chmod +x misc_killer_picsteg_rs-*
 ```
 
 ### 从源码构建
 
 ```bash
-cd zsteg-rust
+cd misc_killer_picsteg_rs
 cargo build --release
-./target/release/zsteg-rust <image.png>
+./target/release/misc_killer_picsteg_rs <image.png>
 ```
 
 ## 使用方法
@@ -36,13 +36,13 @@ cargo build --release
 
 ```bash
 # 默认检查
-./target/release/zsteg-rust image.png
+./target/release/misc_killer_picsteg_rs image.png
 
 # 尝试所有方法
-./target/release/zsteg-rust -a image.png
+./target/release/misc_killer_picsteg_rs -a image.png
 
 # 提取数据
-./target/release/zsteg-rust -E "1b,rgb,lsb" image.png > output.bin
+./target/release/misc_killer_picsteg_rs -E "1b,rgb,lsb" image.png > output.bin
 ```
 
 ## 功能对齐
@@ -60,7 +60,7 @@ cargo build --release
 ## 示例
 
 ```bash
-❯ ./target/release/zsteg-rust ../zsteg/samples/flower_rgb3.png
+❯ ./target/release/misc_killer_picsteg_rs ../zsteg/samples/flower_rgb3.png
 imagedata           .. file: 370 XA sysV pure executable not stripped - version 768
 b3,rgb,lsb,xy       .. text: "SuperSecretMessage"
 ```
