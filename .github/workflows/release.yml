@@ -30,10 +30,10 @@ jobs:
             asset: misc_killer_picsteg_rs-linux-x86_64
             exe: misc_killer_picsteg_rs
 
-          # macOS x86_64（Intel）：macos-14 镜像已于 2026-11 退役、macos-13 容量枯竭，
-          # 改用 macos-15-arm64（Apple Silicon）以 x86_64-apple-darwin target 交叉编译，
+          # macOS x86_64（Intel）：macos-13/14 已退役或枯竭、macos-15-arm64 标签无容量，
+          # 统一在 macos-latest（Apple Silicon）上以 x86_64-apple-darwin target 交叉编译，
           # Apple clang/ld 原生支持双架构，无需额外 cross 链接器
-          - os: macos-15-arm64
+          - os: macos-latest
             target: x86_64-apple-darwin
             asset: misc_killer_picsteg_rs-macos-x86_64
             exe: misc_killer_picsteg_rs
