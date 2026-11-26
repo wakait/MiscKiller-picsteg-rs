@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 mod opts;
 use opts::{Options, decode_param_string, merge_cli_into_options};
+mod carve;
 mod checker;
 mod crack;
 mod extractor;
@@ -149,6 +150,14 @@ struct Cli {
     /// 将爆破出的真实尺寸写回并保存修复后的 PNG 到该路径（配合 --ihdr-brute）
     #[arg(long = "fix-ihdr-out")]
     fix_ihdr_out: Option<PathBuf>,
+
+    /// 扫描并报告文件内嵌入/追加的其他文件（foremost/binwalk 类 magic 雕刻）
+    #[arg(long = "carve", action = ArgAction::SetTrue)]
+    carve: bool,
+
+    /// 将雕刻出的文件导出到该目录（配合 --carve）
+    #[arg(long = "carve-out-dir")]
+    carve_out_dir: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -176,6 +185,11 @@ fn main() -> anyhow::Result<()> {
     // PNG IHDR 宽高 CRC 爆破
     if cli.ihdr_brute {
         return run_ihdr_brute(&cli);
+    }
+
+    // 通用文件雕刻/分离
+    if cli.carve {
+        return run_carve(&cli);
     }
 
     // 解析选项：先默认，再合并 CLI，再合并 param_string（与 Ruby 行为一致：行内覆盖）
@@ -412,6 +426,38 @@ fn run_ihdr_brute(cli: &Cli) -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("生成修复 PNG 失败"))?;
         std::fs::write(out_path, repaired)?;
         println!("[i] 已将修复后的 PNG 写入 {:?}", out_path);
+    }
+    Ok(())
+}
+
+/// 通用文件雕刻：扫描嵌入/追加文件，可选导出
+fn run_carve(cli: &Cli) -> anyhow::Result<()> {
+    let raw = std::fs::read(&cli.input)?;
+    let hits = carve::scan(&raw);
+    if hits.is_empty() {
+        println!("[-] 未发现已知签名的嵌入文件");
+        return Ok(());
+    }
+    println!("[i] 发现 {} 个嵌入/追加文件：", hits.len());
+    for (i, h) in hits.iter().enumerate() {
+        println!(
+            "  #{} {:<18} .{:<6} offset={:<10} size={}",
+            i, h.kind, h.ext, h.offset, h.size
+        );
+    }
+
+    if let Some(dir) = &cli.carve_out_dir {
+        std::fs::create_dir_all(dir)?;
+        let base = cli
+            .input
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("carved");
+        for (i, h) in hits.iter().enumerate() {
+            let out = dir.join(format!("{base}_{i:02}_{}.{}", h.offset, h.ext));
+            std::fs::write(&out, carve::extract(&raw, h))?;
+            println!("[i] 导出 {:?}", out);
+        }
     }
     Ok(())
 }
