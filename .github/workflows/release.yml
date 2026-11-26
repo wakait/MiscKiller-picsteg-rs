@@ -124,7 +124,7 @@ jobs:
           done
 
       - name: 创建发布并上传附件
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: false
           prerelease: false
