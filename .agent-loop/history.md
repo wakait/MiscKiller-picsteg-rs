@@ -105,3 +105,16 @@
   1. PowerShell 反引号转义不产生真控制字节 → 用显式 byte[] 构造 polyglot
   2. 合成 JPEG 无法解码 → metadata 纯字节回退（Iteration#4 已解决，analyze 复用）
 - **下一步行动**: 云端 watch + fetch_run 验证三平台产物；P0 收尾后进入 P1（JPEG DCT 域 steghide/F5/stegpy）
+
+### Iteration #6 - 全项目中文化（2026-11-26）
+- **Commit**: bc42ae9
+- **改动要点**:
+  - README.md 重写为全中文完整文档（项目介绍/功能一览/安装/快速开始/参数说明/格式支持/工作原理/FAQ/从源码开发），删除冗余 README_CN.md
+  - CLI 帮助全中文化：clap 自定义 help_template（用法/参数/选项），自定义中文 -h/--help 与 -V/--version，所有参数 doc 注释译为中文
+  - 源码注释与用户可见报错中文化：opts/checker/extractor/imageio/result/crack/pngcrack/metadata/strings/carve，含 with_context/bail/anyhow 错误信息
+  - 工作流 ci/release/build-loop 及模板的步骤名、loop_driver.sh 全部输出中文化
+  - 保留项（加注释说明）：file 命令忽略列表、算法/格式技术标识符（LSB/CRC/AES 等）、测试数据字面量、history 史实
+- **CI 状态**: 已推送
+- **本地运行结果**: precheck 退出码 0；21/21 测试通过；--help/--version 输出全中文；构建产物正常
+- **根因诊断**: clap 内置 Usage/Arguments/Options 与 Print help 为英文 → 自定义 help_template + disable 内置标志后用 ArgAction::Help/Version 重建中文项
+- **下一步行动**: 按需进入 P1（JPEG DCT 域算法）
