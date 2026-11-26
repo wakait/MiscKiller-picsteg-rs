@@ -136,3 +136,19 @@
   5. `file` 验证交叉产物确为 Mach-O x86_64（CPU type 0x01000007），与 arm64 产物架构正确区分
 - **完整性校验**: 本地 HEAD = 远程 main = v0.1.0 标签提交 = 7cb0ec0；发布页 HTTP 200；附件直链 200 application/octet-stream；8 个附件（4 二进制 + 4 sha256）齐全
 - **下一步行动**: 发布目标达成，结束闭环。后续按需 P1（JPEG DCT 域 steghide/F5/stegpy）
+
+### Iteration #8 - 内置 file 类型识别，移除外部命令依赖（2026-11-27）
+- **Commit**: 1649664
+- **改动要点**:
+  - 新增 `src/filetype.rs`：纯 Rust 内置识别器，31 条魔数规则（图像/文档/压缩包/可执行/数据库，含 RIFF 按 FourCC 二次区分 WebP/WAV/AVI）+ UTF-16 LE/BE 与 ASCII/UTF-8 文本判定（shebang/XML/BOM）；`detect(&[u8]) -> Option<String>`，识别不了返回 None（等价旧 IGNORES 过滤）
+  - 删除 `src/file_cmd.rs`（std::process::Command 外部调用），补齐 Windows 原生无 file 命令的能力缺口；零新增依赖、三平台行为一致
+  - checker 的 CheckState 用 `file_enabled: bool` 替代 `Option<FileCmd>`，改调 `filetype::detect`；main.rs `mod filetype`、更新 `--file` 帮助文案；result.rs 高亮逻辑不变
+  - 描述统一英文小写关键词（png/jpeg/bitmap/pdf/zip/rar/7-zip），兼容 result.rs 的 `to_lowercase + starts_with` 高亮
+  - 新增 8 个单测，累计 29 个测试
+- **CI 状态**: run 45911982789（build-loop）四平台全 success（windows-msvc / linux-musl / macos-x86_64 交叉 / macos-aarch64），watch 退出码 0
+- **本地运行结果**: precheck 退出码 0、29/29 测试；fetch_run 拉 Windows 产物实测：合成 PNG+ZIP 二进制 extradata 输出 `file: zip archive data`，`--file=false` 时不输出，开关语义正确，无 PANIC/ERROR
+- **根因诊断（clippy 新版 lint）**:
+  1. `x % 2 != 0` 触发 manual_is_multiple_of → 改 `!x.is_multiple_of(2)`
+  2. 常量块大小 `chunks_exact(2)` 触发 chunks_exact_to_as_chunks → 改 `as_chunks::<2>().0`
+  3. 描述首字母大写导致 result.rs 小写 `starts_with` 高亮失效、测试失败 → 关键词描述统一小写
+- **下一步行动**: 目标达成，结束闭环。可选后续：Node.js 20 弃用警告（checkout/upload-artifact 升级）、P1 JPEG DCT 域算法
