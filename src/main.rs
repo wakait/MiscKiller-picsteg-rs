@@ -11,6 +11,7 @@ mod file_cmd;
 mod hexdump;
 mod imageio;
 mod metadata;
+mod pngcrack;
 mod result;
 mod strings;
 
@@ -136,6 +137,18 @@ struct Cli {
     /// 仅输出图片元数据（PNG 文本块 / JPEG EXIF、XMP、COM 注释等）
     #[arg(long = "meta", action = ArgAction::SetTrue)]
     meta: bool,
+
+    /// 爆破 PNG IHDR 真实宽高（CRC32 校验），输出候选尺寸
+    #[arg(long = "ihdr-brute", action = ArgAction::SetTrue)]
+    ihdr_brute: bool,
+
+    /// 爆破 IHDR 宽高的候选上限（默认 65535）
+    #[arg(long = "ihdr-max", default_value_t = 65535)]
+    ihdr_max: u32,
+
+    /// 将爆破出的真实尺寸写回并保存修复后的 PNG 到该路径（配合 --ihdr-brute）
+    #[arg(long = "fix-ihdr-out")]
+    fix_ihdr_out: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -158,6 +171,11 @@ fn main() -> anyhow::Result<()> {
     // 全文件明文字符串扫描模式（strings 类）
     if cli.strings_scan {
         return run_strings_scan(&cli);
+    }
+
+    // PNG IHDR 宽高 CRC 爆破
+    if cli.ihdr_brute {
+        return run_ihdr_brute(&cli);
     }
 
     // 解析选项：先默认，再合并 CLI，再合并 param_string（与 Ruby 行为一致：行内覆盖）
@@ -372,6 +390,28 @@ fn run_strings_scan(cli: &Cli) -> anyhow::Result<()> {
         // 单行化，避免多行字符串破坏输出对齐
         let line = h.text.replace(['\n', '\r', '\t'], " ");
         println!("  {:>10}  {:<6}  {}", h.offset, enc, line);
+    }
+    Ok(())
+}
+
+/// PNG IHDR 宽高 CRC 爆破，可选写回修复后的 PNG
+fn run_ihdr_brute(cli: &Cli) -> anyhow::Result<()> {
+    let raw = std::fs::read(&cli.input)?;
+    let hits = pngcrack::brute_force_dimensions(&raw, cli.ihdr_max);
+    if hits.is_empty() {
+        eprintln!("[-] 未能爆破出匹配 CRC 的宽高（非 PNG 或 CRC 本身被破坏）");
+        std::process::exit(1);
+    }
+    println!("[i] 找到 {} 个匹配 CRC32 的尺寸候选：", hits.len());
+    for g in &hits {
+        println!("  width={}  height={}", g.width, g.height);
+    }
+    if let Some(out_path) = &cli.fix_ihdr_out {
+        // 取第一个候选写回
+        let repaired = pngcrack::repaired_png(&raw, hits[0])
+            .ok_or_else(|| anyhow::anyhow!("生成修复 PNG 失败"))?;
+        std::fs::write(out_path, repaired)?;
+        println!("[i] 已将修复后的 PNG 写入 {:?}", out_path);
     }
     Ok(())
 }
