@@ -12,7 +12,7 @@ flate2 = { version = "1.0", features = ["zlib"] }
 colored = "2.1"
 # OpenStego 字典爆破：PBKDF2-HMAC-SHA256 + AES-CBC（simple 特性提供 pbkdf2_hmac）
 pbkdf2 = { version = "0.12", features = ["simple"] }
-hmac = "0.12"
+hmac = "0.13"
 sha2 = "0.10"
 aes = "0.8"
 cbc = "0.1"
