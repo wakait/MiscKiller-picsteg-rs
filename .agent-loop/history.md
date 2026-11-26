@@ -71,3 +71,19 @@
   3. WSL /tmp noexec 且 timeout 信号对 exe 无效 → PowerShell Start-Process 包装
   4. macos-14 标签 arm64 作业启动即取消 → 换 macos-latest
 - **下一步行动**: 进入 P0 首项 strings+EXIF（用户选定），每模块带单测与黄金样本 E2E
+
+### Iteration #4 - P0 strings + EXIF/元数据（2026-11-26）
+- **Commit**: d1266a3
+- **改动要点**:
+  - 新增 src/strings.rs：全文件 ASCII/UTF-16LE 字符串扫描，带偏移、最小长度、UTF16 对齐
+  - 新增 src/metadata.rs：JPEG 标记段扫描（JFIF/EXIF/XMP/Photoshop IRB/COM），PNG 文本块复用；collect_from_raw 支持解码失败回退
+  - imageio 增加 JPEG 魔数识别与 load_jpeg（image crate jpeg feature），ImgFormat 用 Jpeg 替换死变体 Unknown
+  - CLI 新增 --strings-scan/--strings-min/--meta
+  - 7 个新单测（strings 4 + metadata 3），累计 11 测试
+- **CI 状态**: 已推送，待云端验证
+- **本地运行结果**: precheck 退出码 0；11/11 测试通过；extradata.png 准确扫出 IEND 后 foobar3；合成截断 JPEG 经回退路径正确识别 EXIF + COM(CTF{...})
+- **根因诊断**:
+  1. UTF16 扫描 i 从 0 起导致 data[i-1] 下溢 → 改 2 字节成对迭代
+  2. 合成 JPEG 无法被 image crate 解码 → metadata 增加纯字节回退，不依赖完整解码
+  3. load_auto 只认 PNG 其余按 BMP → 补 JPEG 魔数与加载器
+- **下一步行动**: 云端 watch + fetch_run 验证；随后 P0 第二项 PNG 宽高 CRC 爆破
