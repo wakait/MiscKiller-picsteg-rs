@@ -30,8 +30,9 @@ jobs:
             asset: misc_killer_picsteg_rs-linux-x86_64
             exe: misc_killer_picsteg_rs
 
-          # macOS x86_64（Intel 芯片，使用 macos-13  runner）
-          - os: macos-13
+          # macOS x86_64（Intel）：macos-14 为 ARM runner，通过 x86_64 target 交叉编译，
+          # Apple 工具链原生支持双架构，无需额外链接器
+          - os: macos-14
             target: x86_64-apple-darwin
             asset: misc_killer_picsteg_rs-macos-x86_64
             exe: misc_killer_picsteg_rs
