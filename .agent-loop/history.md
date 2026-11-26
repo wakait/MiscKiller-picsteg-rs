@@ -56,3 +56,18 @@
   3. cipher 0.4 encrypt_padded_mut 签名为 (buffer, pos)，数据须预写入 buffer
   4. clap 子命令与顶层位置参数 input 冲突 → 改顶层标志
 - **下一步行动**: 解决远程仓库重组（新建 wakait/MiscKiller-picsteg-rs），随后进入 P0 功能（PNG 宽高爆破/文件雕刻/EXIF）
+
+### Iteration #3 - 仓库重组 + 云端闭环打通（2026-11-26）
+- **Commit**: 429d352（rebrand+crack）、f84163e（gh 探测+macos runner）
+- **改动要点**:
+  - crate 重命名 misc_killer_picsteg_rs；新建 Public 组织仓 wakait/MiscKiller-picsteg-rs；origin 重指，彻底移除 jiayuqi7813 上游及所有跟踪 ref；清 .git/config 残留；全仓旧名替换（README/CI/release/build-loop/模板/环境说明）
+  - loop_driver.sh 增加 gh.exe 探测（Program Files 带空格）、WSL 平台识别路由 Windows 产物、wslpath 路径转换、PowerShell Start-Process 超时执行
+  - build-loop macos runner 修正：x86_64→macos-13、aarch64→macos-latest
+- **CI 状态**: run #45751719071 — windows/linux/macos-aarch64 成功；macos-x86_64 因 GitHub runner 容量排队（基础设施，非代码）
+- **本地运行结果**: fetch_run 退出码 0；云端 Windows 产物正确识别 openstego_send 的 OpenStego 载荷，与本地一致；日志 .local-logs/run_20261126_122553.log 无 PANIC/ERROR
+- **根因诊断**:
+  1. WSL PATH 无 gh/cargo → 分别探测 Windows .exe
+  2. gh.exe 不识别 WSL /tmp 路径 → wslpath -w 转 UNC
+  3. WSL /tmp noexec 且 timeout 信号对 exe 无效 → PowerShell Start-Process 包装
+  4. macos-14 标签 arm64 作业启动即取消 → 换 macos-latest
+- **下一步行动**: 进入 P0 首项 strings+EXIF（用户选定），每模块带单测与黄金样本 E2E

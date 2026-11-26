@@ -57,6 +57,11 @@ echo "[i] 使用 gh: $GH"
 
 # 当前平台 -> 对应 artifact 名
 default_artifact() {
+  # WSL：开发宿主实际为 Windows（cargo/gh 均走 .exe），优先下载 Windows 产物
+  if grep -qiE "microsoft|wsl" /proc/version 2>/dev/null; then
+    echo "${BIN_BASE}-windows-x86_64.exe"
+    return
+  fi
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) echo "${BIN_BASE}-windows-x86_64.exe" ;;
     Linux*)               echo "${BIN_BASE}-linux-x86_64" ;;
@@ -157,8 +162,15 @@ cmd_fetch_run() {
   dl_dir="$(mktemp -d)"
   logfile="$LOG_DIR/run_${ts}.log"
 
+  # gh.exe 是 Windows 程序，下载目录需用 Windows 路径（UNC），否则静默失败
+  if [[ "$GH" == *.exe ]]; then
+    dl_win="$(wslpath -w "$dl_dir")"
+  else
+    dl_win="$dl_dir"
+  fi
+
   echo "==> 从 run #$run_id 下载 artifact: $artifact"
-  "$GH" run download "$run_id" -n "$artifact" -D "$dl_dir"
+  "$GH" run download "$run_id" -n "$artifact" -D "$dl_win"
 
   # 找到下载下来的可执行文件（artifact 内通常为单文件）
   exe="$(find "$dl_dir" -type f | head -n 1)"
@@ -167,9 +179,30 @@ cmd_fetch_run() {
 
   echo "==> 运行（超时 ${timeout_sec}s，RUST_LOG=debug RUST_BACKTRACE=1）: $exe ${run_args[*]:-}"
   set +e
-  RUST_LOG=debug RUST_BACKTRACE=1 \
-    timeout "$timeout_sec" "$exe" "${run_args[@]}" >"$logfile" 2>&1
-  local exit_code=$?
+  if [[ "$exe" == *.exe ]]; then
+    # Windows 原生 exe：WSL /tmp 为 noexec 且 timeout 信号无效，
+    # 统一用 PowerShell Start-Process（支持 UNC 路径、参数数组、超时与退出码）
+    exe_win="$(wslpath -w "$exe")"
+    log_win="$(wslpath -w "$logfile")"
+    err_win="$(wslpath -w "$logfile.err")"
+    args_win=""
+    for a in "${run_args[@]}"; do
+      aw="$(wslpath -w "$a" 2>/dev/null || echo "$a")"
+      args_win+="'$aw',"
+    done
+    args_win="${args_win%,}"
+    powershell.exe -NoProfile -Command "
+      \$p = Start-Process -FilePath '$exe_win' -ArgumentList @($args_win) -NoNewWindow -Wait -PassThru \
+        -RedirectStandardOutput '$log_win' -RedirectStandardError '$err_win';
+      if (-not \$p.WaitForExit(${timeout_sec}000)) { \$p.Kill(); exit 124 };
+      exit \$p.ExitCode"
+    local exit_code=$?
+    [[ -f "$logfile.err" ]] && cat "$logfile.err" >>"$logfile" && rm -f "$logfile.err"
+  else
+    RUST_LOG=debug RUST_BACKTRACE=1 \
+      timeout "$timeout_sec" "$exe" "${run_args[@]}" >"$logfile" 2>&1
+    local exit_code=$?
+  fi
   set -e
 
   local elapsed="n/a"
