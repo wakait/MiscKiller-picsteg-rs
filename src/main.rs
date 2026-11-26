@@ -158,6 +158,10 @@ struct Cli {
     /// 将雕刻出的文件导出到该目录（配合 --carve）
     #[arg(long = "carve-out-dir")]
     carve_out_dir: Option<PathBuf>,
+
+    /// 一键 CTF 流水线：元数据→明文→文件雕刻→(PNG)宽高 CRC→LSB 分析
+    #[arg(long = "analyze", action = ArgAction::SetTrue)]
+    analyze: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -170,6 +174,11 @@ fn main() -> anyhow::Result<()> {
     // 口令爆破模式：独立于原有检测/提取流程
     if cli.crack {
         return run_crack(&cli);
+    }
+
+    // 一键 CTF 流水线（内部有序调用各分析模块）
+    if cli.analyze {
+        return run_analyze(&cli);
     }
 
     // 元数据检查模式（exiftool 类）
@@ -459,5 +468,93 @@ fn run_carve(cli: &Cli) -> anyhow::Result<()> {
             println!("[i] 导出 {:?}", out);
         }
     }
+    Ok(())
+}
+
+/// 一键 CTF 隐写分析流水线，按实战顺序串联各检查器
+fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
+    let banner = |s: &str| println!("\n{} {s}", "===".green().bold());
+    let raw = std::fs::read(&cli.input)?;
+
+    // 1. 元数据检查（exiftool 类）
+    banner("[1/5] 元数据检查 (metadata)");
+    let meta_tags = match imageio::Image::load(&cli.input) {
+        Ok(img) => metadata::collect(&img, &cli.input),
+        Err(_) => metadata::collect_from_raw(&raw),
+    };
+    if meta_tags.is_empty() {
+        println!("[-] 无元数据标签");
+    } else {
+        for t in &meta_tags {
+            println!("  [{:<14}] {:<12} = {}", t.source, t.key, t.value);
+        }
+    }
+
+    // 2. 明文特征提取（strings 类，全文件）
+    banner("[2/5] 明文字符串 (strings)");
+    let str_hits = strings::scan(
+        &raw,
+        &strings::StringsConfig {
+            min_len: cli.strings_min,
+            utf16: true,
+        },
+    );
+    if str_hits.is_empty() {
+        println!("[-] 无 >= {} 长度的明文字符串", cli.strings_min);
+    } else {
+        for h in str_hits.iter().take(50) {
+            let line = h.text.replace(['\n', '\r', '\t'], " ");
+            println!("  {:>10}  {}", h.offset, line);
+        }
+        if str_hits.len() > 50 {
+            println!("  ...（其余 {} 条省略）", str_hits.len() - 50);
+        }
+    }
+
+    // 3. 文件分离/雕刻（foremost/binwalk 类）
+    banner("[3/5] 文件雕刻 (carve)");
+    let carved = carve::scan(&raw);
+    if carved.is_empty() {
+        println!("[-] 未发现嵌入/追加文件");
+    } else {
+        for h in &carved {
+            println!(
+                "  .{:<5} {:<16} offset={} size={}",
+                h.ext, h.kind, h.offset, h.size
+            );
+        }
+    }
+
+    // 4. PNG 宽高 CRC 爆破（仅 PNG）
+    banner("[4/5] PNG 宽高 CRC 爆破 (IHDR)");
+    if raw.starts_with(b"\x89PNG") {
+        let dims = pngcrack::brute_force_dimensions(&raw, cli.ihdr_max);
+        if dims.is_empty() {
+            println!("[-] 未发现 CRC 失配或无法爆破");
+        } else {
+            for g in &dims {
+                println!("  候选尺寸 width={} height={}", g.width, g.height);
+            }
+        }
+    } else {
+        println!("[-] 非 PNG，跳过");
+    }
+
+    // 5. LSB 隐写分析（zsteg 核心，仅位图类可完整解码）
+    banner("[5/5] LSB 隐写分析 (zsteg engine)");
+    match imageio::Image::load(&cli.input) {
+        Ok(img) => {
+            let opts = Options::default();
+            let checker = checker::Checker::new(&img, &opts);
+            let _ = checker.check();
+        }
+        Err(e) => println!("[-] 图片无法解码，跳过 LSB 分析：{e}"),
+    }
+
+    // F5 / stegpy 等特定算法（JPEG DCT 域）属于 P1 阶段，当前版本占位提示
+    println!(
+        "\n{} F5/stegpy/outguess/steghide 等 DCT 域算法将在 P1 阶段支持",
+        "[i]".yellow()
+    );
     Ok(())
 }
