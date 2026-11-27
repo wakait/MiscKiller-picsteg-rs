@@ -84,6 +84,23 @@ pub enum DetectResult {
         /// 校准是否成功
         calibrated: bool,
     },
+    /// PNG/BMP LSB 卡方（chi-square）攻击结果
+    ChiSquareLsb {
+        /// 中文结论（疑似 LSB 全嵌入 / 部分嵌入可疑 / 未见显著 LSB 均衡）
+        verdict: String,
+        /// 通道名（R/G/B/A）
+        channel: String,
+        /// 卡方上侧 p 值（0~1，越接近 1 越疑似 LSB 嵌入）
+        p_value: f64,
+        /// 卡方统计量
+        chi2: f64,
+        /// 自由度
+        df: usize,
+        /// 嵌入比例估计（p 首次达 0.95 的前缀进度，0 表示未达成）
+        embed_ratio: f64,
+        /// 可疑度 0..=100
+        score: u8,
+    },
 }
 
 impl fmt::Display for DetectResult {
@@ -267,6 +284,40 @@ impl fmt::Display for DetectResult {
                 } else {
                     writeln!(f, "{}", header.yellow())?;
                 }
+                write!(f, "{}", stats.bright_black())?;
+                write!(
+                    f,
+                    " {}",
+                    "［启发式盲检测，非确定性结论，仅供研判］".bright_black()
+                )
+            }
+            DetectResult::ChiSquareLsb {
+                verdict,
+                channel,
+                p_value,
+                chi2,
+                df,
+                embed_ratio,
+                score,
+            } => {
+                let header = format!(
+                    "chi-square[{}]: {} 可疑度={}/100 p={:.4}",
+                    channel, verdict, score, p_value
+                );
+                // 按可疑度分级着色：≥95 亮红，≥50 黄色，其余灰色
+                if *score >= 95 {
+                    writeln!(f, "{}", header.bright_red())?;
+                } else if *score >= 50 {
+                    writeln!(f, "{}", header.yellow())?;
+                } else {
+                    writeln!(f, "{}", header.bright_black())?;
+                }
+                let stats = format!(
+                    "（chi2={:.3} df={} 嵌入比例估计={:.1}%）",
+                    chi2,
+                    df,
+                    embed_ratio * 100.0
+                );
                 write!(f, "{}", stats.bright_black())?;
                 write!(
                     f,

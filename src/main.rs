@@ -6,6 +6,7 @@ mod opts;
 use opts::{Options, decode_param_string, merge_cli_into_options};
 mod carve;
 mod checker;
+mod chisq;
 mod crack;
 mod extractor;
 mod filetype;
@@ -189,6 +190,18 @@ struct Cli {
     #[arg(long = "stego-out")]
     stego_out: Option<PathBuf>,
 
+    /// LSB 卡方（chi-square）统计攻击，判断位图是否存在 LSB 隐写（仅 PNG/BMP）
+    #[arg(long = "chi-square", action = ArgAction::SetTrue)]
+    chi_square: bool,
+
+    /// 卡方攻击分析的通道，r/g/b/a 任意组合（逗号分隔）或 all，默认 rgb
+    #[arg(long = "chi-channel", default_value = "rgb")]
+    chi_channel: String,
+
+    /// 卡方攻击分块曲线的块数（沿扫描线前缀累计，默认 20）
+    #[arg(long = "chi-blocks", default_value_t = 20)]
+    chi_blocks: usize,
+
     /// 一键 CTF 流水线：元数据→明文→文件雕刻→(PNG)宽高 CRC→LSB 分析
     #[arg(long = "analyze", action = ArgAction::SetTrue)]
     analyze: bool,
@@ -234,6 +247,11 @@ fn main() -> anyhow::Result<()> {
     // JPEG DCT 域隐写盲检测（F5/steghide）
     if cli.jpeg_stego {
         return run_jpeg_stego(&cli);
+    }
+
+    // PNG/BMP LSB 卡方统计攻击
+    if cli.chi_square {
+        return run_chi_square(&cli);
     }
 
     // 通用文件雕刻/分离
@@ -607,13 +625,99 @@ fn run_jpeg_stego(cli: &Cli) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 解析 `--chi-channel` 参数为通道索引列表（0=R,1=G,2=B,3=A）。
+/// `all` 或含 a 时返回四通道，默认 rgb；无法识别的字符忽略。
+fn parse_chi_channels(spec: &str) -> Vec<u8> {
+    let spec = spec.trim().to_lowercase();
+    if spec == "all" || spec.contains('a') {
+        return vec![0, 1, 2, 3];
+    }
+    let mut chs = Vec::new();
+    for c in spec.chars() {
+        let idx = match c {
+            'r' => Some(0u8),
+            'g' => Some(1u8),
+            'b' => Some(2u8),
+            'a' => Some(3u8),
+            _ => None,
+        };
+        if let Some(i) = idx
+            && !chs.contains(&i)
+        {
+            chs.push(i);
+        }
+    }
+    if chs.is_empty() { vec![0, 1, 2] } else { chs }
+}
+
+/// PNG/BMP LSB 卡方（chi-square）统计攻击
+fn run_chi_square(cli: &Cli) -> anyhow::Result<()> {
+    let raw = std::fs::read(&cli.input)?;
+    // 仅支持可完整解码为像素的位图（PNG/BMP）；JPEG 走 DCT 域，像素卡方不适用
+    let is_png = raw.starts_with(b"\x89PNG");
+    let is_bmp = raw.len() >= 2 && &raw[0..2] == b"BM";
+    if !is_png && !is_bmp {
+        anyhow::bail!("--chi-square 仅支持 PNG/BMP 位图（JPEG 请使用 --jpeg-stego 做 DCT 域分析）");
+    }
+
+    let img = imageio::Image::load(&cli.input)?;
+    let channels = parse_chi_channels(&cli.chi_channel);
+    let report = chisq::analyze_image(&img, &channels, cli.chi_blocks);
+
+    const CH_NAMES: [&str; 4] = ["R", "G", "B", "A"];
+    for cr in &report.channels {
+        if !cr.usable {
+            println!(
+                "{}",
+                format!(
+                    "chi-square[{}]: 通道恒定或有效配对不足，跳过",
+                    CH_NAMES[cr.ch as usize]
+                )
+                .bright_black()
+            );
+            continue;
+        }
+        println!(
+            "{}",
+            DetectResult::ChiSquareLsb {
+                verdict: report.verdict.clone(),
+                channel: CH_NAMES[cr.ch as usize].to_string(),
+                p_value: cr.p_full.max(cr.p_peak),
+                chi2: cr.chi2,
+                df: cr.df,
+                embed_ratio: cr.embed_ratio,
+                score: report.score,
+            }
+        );
+        // 详细模式：打印分块 p 值曲线（每通道至多 10 个点，避免刷屏）
+        if cli.verbose > 0 && !cr.curve.is_empty() {
+            let step = (cr.curve.len() / 10).max(1);
+            let mut line = String::from("  曲线 p(进度): ");
+            for (i, pt) in cr.curve.iter().enumerate().step_by(step) {
+                line.push_str(&format!("{:.0}%→{:.2}  ", pt.progress * 100.0, pt.p));
+                if i >= 9 * step {
+                    break;
+                }
+            }
+            println!("{}", line.bright_black());
+        }
+    }
+    Ok(())
+}
+
 /// 一键 CTF 隐写分析流水线，按实战顺序串联各检查器
 fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
     let banner = |s: &str| println!("\n{} {s}", "===".green().bold());
     let raw = std::fs::read(&cli.input)?;
 
+    // 运行期计算总步数：位图（PNG/BMP）含卡方步共 6 步；JPEG 走 DCT 域共 6 步，
+    // 但二者第 4/6 步按格式互斥触发，编号始终连续且分母正确，消除历史 [n/5] 与 [6/6] 混用。
+    let is_jpeg = raw.starts_with(b"\xFF\xD8\xFF");
+    let is_bitmap = raw.starts_with(b"\x89PNG") || (raw.len() >= 2 && &raw[0..2] == b"BM");
+    let total = 6u32;
+
     // 1. 元数据检查（exiftool 类）
-    banner("[1/5] 元数据检查 (metadata)");
+    banner(&format!("[1/{total}] 元数据检查 (metadata)"));
     let meta_tags = match imageio::Image::load(&cli.input) {
         Ok(img) => metadata::collect(&img, &cli.input),
         Err(_) => metadata::collect_from_raw(&raw),
@@ -627,7 +731,7 @@ fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
     }
 
     // 2. 明文特征提取（strings 类，全文件）
-    banner("[2/5] 明文字符串 (strings)");
+    banner(&format!("[2/{total}] 明文字符串 (strings)"));
     let str_hits = strings::scan(
         &raw,
         &strings::StringsConfig {
@@ -648,7 +752,7 @@ fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
     }
 
     // 3. 文件分离/雕刻（foremost/binwalk 类）
-    banner("[3/5] 文件雕刻 (carve)");
+    banner(&format!("[3/{total}] 文件雕刻 (carve)"));
     let carved = carve::scan(&raw);
     if carved.is_empty() {
         println!("[-] 未发现嵌入/追加文件");
@@ -662,7 +766,7 @@ fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
     }
 
     // 4. PNG 宽高 CRC 爆破（仅 PNG）
-    banner("[4/5] PNG 宽高 CRC 爆破 (IHDR)");
+    banner(&format!("[4/{total}] PNG 宽高 CRC 爆破 (IHDR)"));
     if raw.starts_with(b"\x89PNG") {
         let dims = pngcrack::brute_force_dimensions(&raw, cli.ihdr_max);
         if dims.is_empty() {
@@ -677,7 +781,7 @@ fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
     }
 
     // 5. LSB 隐写分析（zsteg 核心，仅位图类可完整解码）
-    banner("[5/5] LSB 隐写分析 (zsteg engine)");
+    banner(&format!("[5/{total}] LSB 隐写分析 (zsteg engine)"));
     match imageio::Image::load(&cli.input) {
         Ok(img) => {
             let opts = Options::default();
@@ -687,9 +791,48 @@ fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
         Err(e) => println!("[-] 图片无法解码，跳过 LSB 分析：{e}"),
     }
 
-    // 6. JPEG DCT 域检测（JSteg 提取 + F5/steghide 盲检测），仅 JPEG 触发
-    if raw.starts_with(b"\xFF\xD8\xFF") {
-        banner("[6/6] JPEG DCT 域检测 (jsteg + F5/steghide 盲检测)");
+    // 6a. 位图：LSB 卡方统计攻击（仅 PNG/BMP 触发）
+    if is_bitmap {
+        banner(&format!("[6/{total}] LSB 卡方攻击 (chi-square)"));
+        match imageio::Image::load(&cli.input) {
+            Ok(img) => {
+                let chi = chisq::analyze_image(&img, &[0, 1, 2, 3], cli.chi_blocks);
+                const CH_NAMES: [&str; 4] = ["R", "G", "B", "A"];
+                for cr in &chi.channels {
+                    if !cr.usable {
+                        println!(
+                            "{}",
+                            format!(
+                                "chi-square[{}]: 通道恒定或有效配对不足，跳过",
+                                CH_NAMES[cr.ch as usize]
+                            )
+                            .bright_black()
+                        );
+                        continue;
+                    }
+                    println!(
+                        "{}",
+                        DetectResult::ChiSquareLsb {
+                            verdict: chi.verdict.clone(),
+                            channel: CH_NAMES[cr.ch as usize].to_string(),
+                            p_value: cr.p_full.max(cr.p_peak),
+                            chi2: cr.chi2,
+                            df: cr.df,
+                            embed_ratio: cr.embed_ratio,
+                            score: chi.score,
+                        }
+                    );
+                }
+            }
+            Err(e) => println!("[-] 图片无法解码，跳过卡方攻击：{e}"),
+        }
+    }
+
+    // 6b. JPEG DCT 域检测（JSteg 提取 + F5/steghide 盲检测），仅 JPEG 触发
+    if is_jpeg {
+        banner(&format!(
+            "[6/{total}] JPEG DCT 域检测 (jsteg + F5/steghide 盲检测)"
+        ));
         match jsteg::extract(&raw) {
             Ok(payload) if payload.usable_coeffs > 0 => {
                 let preview_source = jsteg::parse_length_prefixed(&payload.bytes)
