@@ -56,6 +56,15 @@ pub enum DetectResult {
         even: bool,
     },
     FileType(String),
+    /// JPEG JSteg（DCT 域 LSB）提取结果
+    Jsteg {
+        /// 承载比特的可用交流系数总数（即提取比特数）
+        usable_coeffs: usize,
+        /// 打包后字节数
+        byte_len: usize,
+        /// 可打印明文预览（可能为空）
+        preview: String,
+    },
 }
 
 impl fmt::Display for DetectResult {
@@ -189,6 +198,27 @@ impl fmt::Display for DetectResult {
                     }
                 };
                 write!(f, "{}", colored_desc)
+            }
+            DetectResult::Jsteg {
+                usable_coeffs,
+                byte_len,
+                preview,
+            } => {
+                // 统计信息灰色，明文预览亮红色（无预览则提示原始字节）
+                let header = format!(
+                    "jsteg: 可用 AC 系数={} 提取比特={} 打包字节={}",
+                    usable_coeffs, usable_coeffs, byte_len
+                );
+                write!(f, "{}", header.bright_black())?;
+                if preview.is_empty() {
+                    write!(
+                        f,
+                        "{}",
+                        "（无可打印明文，详见 --jsteg-out 原始字节）".bright_black()
+                    )
+                } else {
+                    write!(f, " {}", format!("text: {:?}", preview).bright_red())
+                }
             }
         }
     }

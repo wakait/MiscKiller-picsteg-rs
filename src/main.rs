@@ -11,9 +11,11 @@ mod extractor;
 mod filetype;
 mod hexdump;
 mod imageio;
+mod jsteg;
 mod metadata;
 mod pngcrack;
 mod result;
+use result::DetectResult;
 mod strings;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, ValueEnum)]
@@ -170,6 +172,14 @@ struct Cli {
     #[arg(long = "carve-out-dir")]
     carve_out_dir: Option<PathBuf>,
 
+    /// JPEG JSteg（DCT 域 LSB）隐写检测与载荷提取（仅 JPEG）
+    #[arg(long = "jsteg", action = ArgAction::SetTrue)]
+    jsteg: bool,
+
+    /// 将 JSteg 提取的原始字节写入该文件（配合 --jsteg）
+    #[arg(long = "jsteg-out")]
+    jsteg_out: Option<PathBuf>,
+
     /// 一键 CTF 流水线：元数据→明文→文件雕刻→(PNG)宽高 CRC→LSB 分析
     #[arg(long = "analyze", action = ArgAction::SetTrue)]
     analyze: bool,
@@ -205,6 +215,11 @@ fn main() -> anyhow::Result<()> {
     // PNG IHDR 宽高 CRC 爆破
     if cli.ihdr_brute {
         return run_ihdr_brute(&cli);
+    }
+
+    // JPEG JSteg（DCT 域 LSB）检测与提取
+    if cli.jsteg {
+        return run_jsteg(&cli);
     }
 
     // 通用文件雕刻/分离
@@ -482,6 +497,44 @@ fn run_carve(cli: &Cli) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// JPEG JSteg（DCT 域 LSB）隐写检测与载荷提取
+fn run_jsteg(cli: &Cli) -> anyhow::Result<()> {
+    let raw = std::fs::read(&cli.input)?;
+    // JPEG 魔数 FF D8 FF 校验
+    if raw.len() < 3 || !raw.starts_with(b"\xFF\xD8\xFF") {
+        anyhow::bail!("--jsteg 仅支持 JPEG 输入（缺少 FF D8 FF 魔数）");
+    }
+
+    let payload = jsteg::extract(&raw)?;
+    if payload.usable_coeffs == 0 {
+        eprintln!("[-] 未找到可承载 JSteg 比特的交流系数");
+        return Ok(());
+    }
+
+    // 优先按长度前缀解析真实负载，失败则取原始字节做可打印预览
+    let (plain, preview_source) = match jsteg::parse_length_prefixed(&payload.bytes) {
+        Some(plain) => (plain.clone(), plain),
+        None => (payload.bytes.clone(), payload.bytes.clone()),
+    };
+    let preview = jsteg::printable_preview(&preview_source, 200);
+
+    println!(
+        "{}",
+        DetectResult::Jsteg {
+            usable_coeffs: payload.usable_coeffs,
+            byte_len: payload.bytes.len(),
+            preview: preview.clone(),
+        }
+    );
+
+    // 输出写文件：有长度前缀时写解析出的明文，否则写全部原始字节
+    if let Some(out_path) = &cli.jsteg_out {
+        std::fs::write(out_path, &plain)?;
+        println!("[i] 已将 {} 字节提取结果写入 {:?}", plain.len(), out_path);
+    }
+    Ok(())
+}
+
 /// 一键 CTF 隐写分析流水线，按实战顺序串联各检查器
 fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
     let banner = |s: &str| println!("\n{} {s}", "===".green().bold());
@@ -562,10 +615,26 @@ fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
         Err(e) => println!("[-] 图片无法解码，跳过 LSB 分析：{e}"),
     }
 
-    // F5 / stegpy 等特定算法（JPEG DCT 域）属于 P1 阶段，当前版本占位提示
-    println!(
-        "\n{} F5/stegpy/outguess/steghide 等 DCT 域算法将在 P1 阶段支持",
-        "[i]".yellow()
-    );
+    // 6. JPEG JSteg（DCT 域 LSB）检测，仅 JPEG 触发
+    if raw.starts_with(b"\xFF\xD8\xFF") {
+        banner("[6/6] JPEG JSteg DCT 域检测 (jsteg)");
+        match jsteg::extract(&raw) {
+            Ok(payload) if payload.usable_coeffs > 0 => {
+                let preview_source = jsteg::parse_length_prefixed(&payload.bytes)
+                    .unwrap_or_else(|| payload.bytes.clone());
+                let preview = jsteg::printable_preview(&preview_source, 200);
+                println!(
+                    "{}",
+                    DetectResult::Jsteg {
+                        usable_coeffs: payload.usable_coeffs,
+                        byte_len: payload.bytes.len(),
+                        preview,
+                    }
+                );
+            }
+            Ok(_) => println!("[-] 未找到可承载 JSteg 比特的交流系数"),
+            Err(e) => println!("[-] JSteg 分析失败：{e}"),
+        }
+    }
     Ok(())
 }
