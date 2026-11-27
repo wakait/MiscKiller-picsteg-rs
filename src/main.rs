@@ -582,10 +582,12 @@ fn run_jpeg_stego(cli: &Cli) -> anyhow::Result<()> {
              待测零占比: {:.6}\n\
              校准零占比: {:.6}\n\
              一阶直方图 L1 散度: {:.6}\n\
-             二阶共现 L1 散度: {:.6}\n\
-             块效应偏离: {:.6}\n\
+             块间共现 L1 散度（Fridrich 公式8）: {:.6}\n\
+             块间变化相对偏离率（公式5）: {:.6}\n\
+             块效应 B1 相对偏离率（公式6）: {:.6}\n\
              校准成功: {}\n\
-             说明: 启发式盲检测，非确定性结论，不提取明文，仅供研判。\n",
+             说明: 启发式盲检测，非确定性结论，不提取明文，仅供研判；\
+             高纹理图上的低嵌入率 steghide 可能无法与干净图区分。\n",
             cli.input,
             report.verdict.as_cn(),
             report.score,
@@ -595,7 +597,8 @@ fn run_jpeg_stego(cli: &Cli) -> anyhow::Result<()> {
             report.calib_zero_ratio,
             report.histogram_divergence,
             report.cooccurrence_divergence,
-            report.blockiness_delta,
+            report.variation_rel,
+            report.blockiness_rel,
             report.calibrated,
         );
         std::fs::write(out_path, text)?;

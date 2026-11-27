@@ -255,7 +255,7 @@ impl fmt::Display for DetectResult {
                     verdict, guess, score
                 );
                 let stats = format!(
-                    "（零占比 {:.3} vs 校准 {:.3}，一阶散度 {:.3}，二阶共现散度 {:.3}，校准{}）",
+                    "（零占比 {:.3} vs 校准 {:.3}，一阶散度 {:.3}，块间共现散度 {:.3}，校准{}）",
                     zero_ratio,
                     calib_zero_ratio,
                     histogram_divergence,

@@ -2,3 +2,9 @@ flower*.png   - http://punkroy.drque.net/PNG_Steganography/Steganography3.php
 cats.png      - RuCTF2012 - steg400 - http://darkbyte.ru/2012/46/ructf-2012-quals-writeup-cats/
 opensteg*.png - http://openstego.sourceforge.net/
 Code.png      - http://blog.secoverflow.org/gchq-can-you-crack-it-writeup/
+
+JPEG DCT 域黄金样本（本机工具链回环生成，用于 jsteg/jpegsteg 模块）：
+jsteg_base.jpg / jsteg_embedded.jpg  - JSteg LSB 干净载体与系数级注入样本
+steghide_embedded.jpg / steghide_full.jpg - steghide 0.6 低嵌入率与满容量样本
+steghide_smooth_base.jpg / steghide_smooth.jpg - 低纹理（非标准量化表）干净图与高嵌入率 steghide，专用于校准误报回归
+f5_embedded.jpg - F5（matthewgao 参考实现）矩阵编码样本，零系数收缩显著
