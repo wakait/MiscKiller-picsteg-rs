@@ -11,6 +11,7 @@ mod extractor;
 mod filetype;
 mod hexdump;
 mod imageio;
+mod jpegsteg;
 mod jsteg;
 mod metadata;
 mod pngcrack;
@@ -180,6 +181,14 @@ struct Cli {
     #[arg(long = "jsteg-out")]
     jsteg_out: Option<PathBuf>,
 
+    /// JPEG DCT 域隐写盲检测（F5/steghide 启发式评分，仅 JPEG）
+    #[arg(long = "jpeg-stego", action = ArgAction::SetTrue)]
+    jpeg_stego: bool,
+
+    /// 将盲检测完整报告写入该文本文件（配合 --jpeg-stego）
+    #[arg(long = "stego-out")]
+    stego_out: Option<PathBuf>,
+
     /// 一键 CTF 流水线：元数据→明文→文件雕刻→(PNG)宽高 CRC→LSB 分析
     #[arg(long = "analyze", action = ArgAction::SetTrue)]
     analyze: bool,
@@ -220,6 +229,11 @@ fn main() -> anyhow::Result<()> {
     // JPEG JSteg（DCT 域 LSB）检测与提取
     if cli.jsteg {
         return run_jsteg(&cli);
+    }
+
+    // JPEG DCT 域隐写盲检测（F5/steghide）
+    if cli.jpeg_stego {
+        return run_jpeg_stego(&cli);
     }
 
     // 通用文件雕刻/分离
@@ -535,6 +549,61 @@ fn run_jsteg(cli: &Cli) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// JPEG DCT 域隐写盲检测（F5 / steghide 启发式评分）
+fn run_jpeg_stego(cli: &Cli) -> anyhow::Result<()> {
+    let raw = std::fs::read(&cli.input)?;
+    if raw.len() < 3 || !raw.starts_with(b"\xFF\xD8\xFF") {
+        anyhow::bail!("--jpeg-stego 仅支持 JPEG 输入（缺少 FF D8 FF 魔数）");
+    }
+
+    let report = jpegsteg::analyze(&raw)?;
+    println!(
+        "{}",
+        DetectResult::JpegDctStego {
+            verdict: report.verdict.as_cn().to_string(),
+            guess: report.guess.as_label().to_string(),
+            score: report.score,
+            zero_ratio: report.zero_ratio,
+            calib_zero_ratio: report.calib_zero_ratio,
+            histogram_divergence: report.histogram_divergence,
+            cooccurrence_divergence: report.cooccurrence_divergence,
+            calibrated: report.calibrated,
+        }
+    );
+
+    // 可选：把完整报告（含块效应等全部指标）写为文本留档
+    if let Some(out_path) = &cli.stego_out {
+        let text = format!(
+            "JPEG DCT 域隐写盲检测报告\n\
+             输入文件: {:?}\n\
+             结论: {}（可疑度 {}/100）\n\
+             启发式归因: {}\n\
+             亮度 AC 系数总数: {}\n\
+             待测零占比: {:.6}\n\
+             校准零占比: {:.6}\n\
+             一阶直方图 L1 散度: {:.6}\n\
+             二阶共现 L1 散度: {:.6}\n\
+             块效应偏离: {:.6}\n\
+             校准成功: {}\n\
+             说明: 启发式盲检测，非确定性结论，不提取明文，仅供研判。\n",
+            cli.input,
+            report.verdict.as_cn(),
+            report.score,
+            report.guess.as_label(),
+            report.ac_total,
+            report.zero_ratio,
+            report.calib_zero_ratio,
+            report.histogram_divergence,
+            report.cooccurrence_divergence,
+            report.blockiness_delta,
+            report.calibrated,
+        );
+        std::fs::write(out_path, text)?;
+        println!("[i] 完整报告已写入 {:?}", out_path);
+    }
+    Ok(())
+}
+
 /// 一键 CTF 隐写分析流水线，按实战顺序串联各检查器
 fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
     let banner = |s: &str| println!("\n{} {s}", "===".green().bold());
@@ -615,9 +684,9 @@ fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
         Err(e) => println!("[-] 图片无法解码，跳过 LSB 分析：{e}"),
     }
 
-    // 6. JPEG JSteg（DCT 域 LSB）检测，仅 JPEG 触发
+    // 6. JPEG DCT 域检测（JSteg 提取 + F5/steghide 盲检测），仅 JPEG 触发
     if raw.starts_with(b"\xFF\xD8\xFF") {
-        banner("[6/6] JPEG JSteg DCT 域检测 (jsteg)");
+        banner("[6/6] JPEG DCT 域检测 (jsteg + F5/steghide 盲检测)");
         match jsteg::extract(&raw) {
             Ok(payload) if payload.usable_coeffs > 0 => {
                 let preview_source = jsteg::parse_length_prefixed(&payload.bytes)
@@ -634,6 +703,24 @@ fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
             }
             Ok(_) => println!("[-] 未找到可承载 JSteg 比特的交流系数"),
             Err(e) => println!("[-] JSteg 分析失败：{e}"),
+        }
+
+        // F5/steghide 启发式盲检测（统计评分，非确定性）
+        match jpegsteg::analyze(&raw) {
+            Ok(report) => println!(
+                "{}",
+                DetectResult::JpegDctStego {
+                    verdict: report.verdict.as_cn().to_string(),
+                    guess: report.guess.as_label().to_string(),
+                    score: report.score,
+                    zero_ratio: report.zero_ratio,
+                    calib_zero_ratio: report.calib_zero_ratio,
+                    histogram_divergence: report.histogram_divergence,
+                    cooccurrence_divergence: report.cooccurrence_divergence,
+                    calibrated: report.calibrated,
+                }
+            ),
+            Err(e) => println!("[-] F5/steghide 盲检测失败：{e}"),
         }
     }
     Ok(())

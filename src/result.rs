@@ -65,6 +65,25 @@ pub enum DetectResult {
         /// 可打印明文预览（可能为空）
         preview: String,
     },
+    /// JPEG DCT 域隐写盲检测结果（F5 / steghide 启发式研判）
+    JpegDctStego {
+        /// 可疑度中文结论
+        verdict: String,
+        /// 启发式算法归因（F5 / steghide / 不确定）
+        guess: String,
+        /// 综合可疑度 0..=100
+        score: u8,
+        /// 待测图 AC 零值占比
+        zero_ratio: f64,
+        /// 校准参考图 AC 零值占比
+        calib_zero_ratio: f64,
+        /// 直方图归一化 L1 散度
+        histogram_divergence: f64,
+        /// 相邻系数共现矩阵 L1 散度（二阶特征）
+        cooccurrence_divergence: f64,
+        /// 校准是否成功
+        calibrated: bool,
+    },
 }
 
 impl fmt::Display for DetectResult {
@@ -219,6 +238,41 @@ impl fmt::Display for DetectResult {
                 } else {
                     write!(f, " {}", format!("text: {:?}", preview).bright_red())
                 }
+            }
+            DetectResult::JpegDctStego {
+                verdict,
+                guess,
+                score,
+                zero_ratio,
+                calib_zero_ratio,
+                histogram_divergence,
+                cooccurrence_divergence,
+                calibrated,
+            } => {
+                // 统计指标灰色，高可疑结论亮红
+                let header = format!(
+                    "jpeg-dct: 结论={} 归因={} 可疑度={}/100",
+                    verdict, guess, score
+                );
+                let stats = format!(
+                    "（零占比 {:.3} vs 校准 {:.3}，一阶散度 {:.3}，二阶共现散度 {:.3}，校准{}）",
+                    zero_ratio,
+                    calib_zero_ratio,
+                    histogram_divergence,
+                    cooccurrence_divergence,
+                    if *calibrated { "成功" } else { "不可用" }
+                );
+                if *score >= 50 {
+                    writeln!(f, "{}", header.bright_red())?;
+                } else {
+                    writeln!(f, "{}", header.yellow())?;
+                }
+                write!(f, "{}", stats.bright_black())?;
+                write!(
+                    f,
+                    " {}",
+                    "［启发式盲检测，非确定性结论，仅供研判］".bright_black()
+                )
             }
         }
     }
