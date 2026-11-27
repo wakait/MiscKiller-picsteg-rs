@@ -168,3 +168,22 @@
   2. 常量块 `chunks_exact(8)` 触发 chunks_exact_to_as_chunks → 改 `as_chunks::<8>()`
   3. 关键工程决策：Python 侧无 jpegio（仅 PIL/numpy 像素级），无法做 DCT 系数注入；改用同 Rust 库的 write_coefficients 建临时注入工具生成样本，保证注入/提取同源对称，验证后删除工具
 - **下一步行动**: P1 首项达成，仍在 agent/pass-crack 未合并 main。可选后续：steghide/F5 检测、Node.js 20 action 升级、README 补充 JSteg 用法
+
+### Iteration #10 - P1 steghide/F5 JPEG DCT 盲检测（校准攻击）（2026-11-28）
+- **Commit**: c1e62f4
+- **改动要点**:
+  - 新增 `src/jpegsteg.rs`：纯 Rust 校准攻击（decompress→裁左上 4px→同质量 compress→read_coefficients），对亮度 AC 提取四类指标——零占比、一阶直方图归一化 L1 散度、块内相邻系数共现矩阵二阶 L1 散度（针对保持一阶统计的 steghide）、块效应偏离；四维加权评分 0-100，启发式区分 F5（零收缩主导）/steghide（二阶共现主导）；12 个纯函数单测
+  - `result.rs` 新增 `DetectResult::JpegDctStego` 与 `jpeg-dct:` 展示，固定附"启发式盲检测，非确定性结论，仅供研判"免责声明
+  - `main.rs` 新增 `--jpeg-stego`/`--stego-out`（可写完整文本报告）与 run_jpeg_stego；`--analyze` 的 JPEG 分支同时跑 JSteg 提取与 F5/steghide 盲检测
+  - 真实黄金样本：steghide_embedded/steghide_full（本机 steghide 0.6，回环验证）、f5_embedded（matthewgao/F5 Java 参考实现，用 Windows JDK21 + `--add-exports java.base/sun.security.provider=ALL-UNNAMED` 跑通，回环验证）
+- **CI 状态**: run 46039047855 四平台全 success（含 musl 校准重压缩 API 跨平台可用），watch 退出码 0；precheck 50/50 测试通过
+- **本地/云端运行结果（对照矩阵）**:
+  - F5 样本：93/100 高度可疑、准确归因 F5（零占比 0.540 vs 校准 0.236，收缩效应显著；文件比 cover 小 12696 字节）
+  - cover/jsteg/steghide：均 17-18 分低误报，校准成功
+- **根因诊断（steghide 检测局限，重要诚实结论）**:
+  1. steghide 用图论交换保持一阶直方图，chi-square 与一阶散度天然失效；满容量嵌入二阶共现散度仍仅 0.042，与 cover 的 0.043 无差异
+  2. 根因：steghide 嵌入后文件大小几乎不变（delta≈0/-17B），图论交换只动极少量系数且不增零；校准重压缩进一步把微弱扰动压进统计噪声
+  3. 无训练分类器（SRM/富模型 + SVM/CNN）时，纯启发式统计对低嵌入率 steghide 不敏感是学术界公认难点，非实现缺陷；评分通路本身经单测验证对强二阶扰动正确响应（score_cooccurrence_dominant 测试）
+  4. clippy：needless_borrow（去掉 calib_blocks 前多余 &）
+- **能力红线**: 本功能输出可疑度而非确定结论，不提取明文、不保证算法归因；已在代码注释、CLI 输出、--stego-out 报告中声明
+- **下一步行动**: 盲检测达成且边界清晰，仍在 agent/pass-crack 未合并 main。可选：训练型富模型分类器（超出纯 Rust 无依赖范围）、Node.js 20 action 升级、README 补 DCT 章节
