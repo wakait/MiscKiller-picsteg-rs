@@ -152,3 +152,19 @@
   2. 常量块大小 `chunks_exact(2)` 触发 chunks_exact_to_as_chunks → 改 `as_chunks::<2>().0`
   3. 描述首字母大写导致 result.rs 小写 `starts_with` 高亮失效、测试失败 → 关键词描述统一小写
 - **下一步行动**: 目标达成，结束闭环。可选后续：Node.js 20 弃用警告（checkout/upload-artifact 升级）、P1 JPEG DCT 域算法
+
+### Iteration #9 - P1 首个 DCT 域功能：JPEG JSteg/LSB 检测（2026-11-27）
+- **Commit**: ee4a70b
+- **改动要点**:
+  - 新增纯 Rust 依赖 `libjpeg-turbo-rs` 0.9（无 C/FFI、no_std 兼容，默认 simd+std）；image/zune-jpeg 只输出像素不暴露 DCT，改用该库 `read_coefficients` 直接拿量化 DCT 系数（跳过 IDCT/色彩转换）
+  - 新增 `src/jsteg.rs`：JSteg 标准规则——跳过每块 DC(block[0]) 与值为 0/1/-1 的 AC，对其余 AC 取 `unsigned_abs() & 1`，按 分量→块→zigzag 顺序收集后 MSB-first 打包；支持 BE/LE 4 字节长度前缀解析与可打印明文预览；9 个纯函数单测
+  - `result.rs` 新增 `DetectResult::Jsteg{usable_coeffs,byte_len,preview}` 与 `jsteg:` 展示分支
+  - `main.rs` 新增 `--jsteg`/`--jsteg-out` 标志与 `run_jsteg`（FF D8 FF 魔数校验）；`--analyze` 增加 `[6/6] JPEG JSteg` 步骤替换原 P1 占位
+  - 新增黄金样本 `samples/jsteg_base.jpg`、`jsteg_embedded.jpg`（用同库 write_coefficients 做系数级注入，与提取端严格对称）
+- **CI 状态**: run 45967550381 四平台全 success；**Linux musl 静态链接通过**（新依赖最大风险点排除），watch 退出码 0
+- **本地运行结果**: precheck 退出码 0、38/38 测试（新增 9 个 jsteg）；本地与云端 Windows 产物均正确还原，提取字节前 37 字节与注入明文 `JSTEG_SECRET_FLAG_2026_CTF_PAYLOAD_OK` 逐字节一致，`--analyze` 的 [6/6] 分支正常触发，无 PANIC/ERROR
+- **根因诊断（clippy 新版 lint）**:
+  1. `0 | 1 | -1` OR 模式触发 manual_range_patterns → 改 `-1..=1`
+  2. 常量块 `chunks_exact(8)` 触发 chunks_exact_to_as_chunks → 改 `as_chunks::<8>()`
+  3. 关键工程决策：Python 侧无 jpegio（仅 PIL/numpy 像素级），无法做 DCT 系数注入；改用同 Rust 库的 write_coefficients 建临时注入工具生成样本，保证注入/提取同源对称，验证后删除工具
+- **下一步行动**: P1 首项达成，仍在 agent/pass-crack 未合并 main。可选后续：steghide/F5 检测、Node.js 20 action 升级、README 补充 JSteg 用法
