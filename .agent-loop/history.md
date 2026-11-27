@@ -187,3 +187,25 @@
   4. clippy：needless_borrow（去掉 calib_blocks 前多余 &）
 - **能力红线**: 本功能输出可疑度而非确定结论，不提取明文、不保证算法归因；已在代码注释、CLI 输出、--stego-out 报告中声明
 - **下一步行动**: 盲检测达成且边界清晰，仍在 agent/pass-crack 未合并 main。可选：训练型富模型分类器（超出纯 Rust 无依赖范围）、Node.js 20 action 升级、README 补 DCT 章节
+
+### Iteration #11 - 校准攻击修正：同量化表重压缩 + 显著性门控评分（2026-11-28）
+- **Commit**: 3273133
+- **改动要点**:
+  - 校准器重写：`calibrate` 改用 `encode::pipeline::compress_custom_quant`，复用原图 `JpegCoefficients.quant_tables` 的 slot0(luma)/slot1(chroma) 量化表（自然序，与编码器入参约定一致，无需 zigzag 转换），落实 Fridrich 校准"量化矩阵不变、仅 8×8 网格错位"的核心要求；替换原来固定 quality=92 的错误做法
+  - 评分模型重写：`score_report` 引入"显著性门控"——五维（零收缩30/共现25/一阶15/变化15/块效应15）各自越阈才计分，亚阈值校准噪声一律记 0，越阈后按超阈强度给 0.5~1.0 倍权重；阈值依据同表校准后真实样本重标（zero 0.02/hist 0.10/cooc 0.06/var 0.30/block 0.15）
+  - 归因：zero_lift≥0.02 判 F5（同表校准后非 F5 最大 zero_lift 仅 0.0011，F5 为 0.048，约 44 倍间隔）；零占比正常而共现/变化越阈判 steghide
+  - 新增低纹理非标准量化表黄金样本 steghide_smooth_base.jpg / steghide_smooth.jpg 与门控回归单测 `score_subthreshold_noise_does_not_accumulate`，累计 55 测试
+- **CI 状态**: run #46047990366 四平台全 success（windows-msvc / linux-musl / macos-x86_64 / macos-aarch64），watch 退出码 0；仅有 Node.js 20 弃用 annotation（基础设施，非失败）
+- **本地运行结果**: precheck 退出码 0、55/55 测试、fmt/clippy -D warnings 全过
+- **云端产物端到端（fetch_run 运行 #46047990366 Windows exe，均退出码 0 无 PANIC/ERROR）**:
+  - f5_embedded.jpg：99/100 高度可疑、归因 F5（零占比 0.540 vs 同表校准 0.492，一阶 0.115、共现 0.164）
+  - steghide_smooth_base.jpg（旧逻辑误报 67/100）：**0/100 Clean**，回归修复确认
+  - 其余 5 个非 F5 样本（jsteg cover/embedded、steghide 低/满容量、低纹理 steghide）全部 0/100 Clean
+- **根因诊断（关键认知）**:
+  1. 旧固定 Q92 校准在**非标准量化表**图上引入二次量化噪声：低纹理平滑图 luma 量化表 DC=5（远细于 Q92 标准表），用错表重压缩使校准零占比 0.954 偏离真实 0.968，单是零占比就虚高 +0.014，五维亚阈值偏差累加炸出 67 分假阳性
+  2. 同表重压缩后该图校准零占比回到 0.968006（与待测 0.968145 几乎相同），histDiv 0.0615→0.0156、coocDiv 0.0476→0.0215，假阳性信号消失
+  3. 旧"线性加权累加"模型的结构性缺陷：任何不显著的微小偏离都按比例给分，多维噪声叠加即误报；门控模型从机制上杜绝此类假阳性
+  4. F5 在同表校准下 zero_lift 虽从 0.304 收敛到 0.048（收缩效应部分被同表重压缩吸收），但仍 44 倍于非 F5 上限，配合一阶/共现越阈，综合 99 分，检测力不降反升
+- **诚实边界（保持不变）**: 高纹理图上的低嵌入率/满容量 steghide 与干净图各维特征无差异（同表校准后 cooc 0.021-0.023 vs cover 0.024），无训练富模型分类器时单图启发式无法区分，属学界公认难点；低纹理高嵌入率 steghide_smooth 与同源干净图在同表校准后同样不可分（均 0 分），不再靠二次量化噪声制造无统计学依据的"区分"
+- **环境备忘**: 本机 WSL 无 git 凭据助手且无 System32 PATH，直接 `git push` 会在不可见的账号密码提示上挂起；解法为 `GIT_TERMINAL_PROMPT=0` + 一次性 `https://x-access-token:<gh token>@...` URL 推送（token 不落仓库配置），fetch_run 前需 `export PATH` 补 /mnt/c/Windows/System32 与 WindowsPowerShell/v1.0
+- **下一步行动**: 盲检测假阳性根因修复且云端验证达成，仍在 agent/pass-crack 未合并 main。可选：Node.js 20 action 升级、README 补 DCT/盲检测章节
