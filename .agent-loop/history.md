@@ -209,3 +209,26 @@
 - **诚实边界（保持不变）**: 高纹理图上的低嵌入率/满容量 steghide 与干净图各维特征无差异（同表校准后 cooc 0.021-0.023 vs cover 0.024），无训练富模型分类器时单图启发式无法区分，属学界公认难点；低纹理高嵌入率 steghide_smooth 与同源干净图在同表校准后同样不可分（均 0 分），不再靠二次量化噪声制造无统计学依据的"区分"
 - **环境备忘**: 本机 WSL 无 git 凭据助手且无 System32 PATH，直接 `git push` 会在不可见的账号密码提示上挂起；解法为 `GIT_TERMINAL_PROMPT=0` + 一次性 `https://x-access-token:<gh token>@...` URL 推送（token 不落仓库配置），fetch_run 前需 `export PATH` 补 /mnt/c/Windows/System32 与 WindowsPowerShell/v1.0
 - **下一步行动**: 盲检测假阳性根因修复且云端验证达成，仍在 agent/pass-crack 未合并 main。可选：Node.js 20 action 升级、README 补 DCT/盲检测章节
+
+### Iteration #12 - PNG/BMP LSB 卡方（chi-square）统计攻击（2026-11-28）
+- **Commit**: 9af1d20
+- **改动要点**:
+  - 新建 `src/chisq.rs`：纯 std 手写 Lanczos-7 `ln_gamma`、正则化下不完全伽马 `gammp`（x<a+1 级数展开，否则 Lentz 连分式，迭代 200、容差 3e-12），零新增依赖实现卡方上侧 p 值 `chi_pvalue=1-P(df/2,chi2/2)`
+  - 统计层：256 桶 `channel_histogram`、128 个 POC 配对的 `chi_square`（expected>0 过滤、df=k-1）、沿扫描线增量分块的 `analyze_channel`（p 值曲线 + 嵌入比例估计）、`analyze_image` 四通道汇总
+  - 双指标判定：除全图 p 外引入曲线峰值 `p_peak`，取 max(p_full,p_peak) 下结论，解决"前段嵌入后段原始"导致全图 p 被稀释的漏报；alpha 恒定（有效配对<2）自动标记 usable=false 跳过
+  - `result.rs` 新增 `DetectResult::ChiSquareLsb` 与分级着色 Display（≥95 红/≥50 黄/其余灰）+ 固定免责声明
+  - `main.rs` 新增 `--chi-square/--chi-channel(默认rgb,可all)/--chi-blocks(默认20)` 与 `run_chi_square`，挂入早返回链；`run_analyze` 第 6 步位图触发卡方，并把历史混用的 `[n/5]` 与 `[6/6]` 统一为运行期 `[n/6]`（位图/JPEG 第 6 步互斥）
+  - README 补独立章节、功能表、参数表、格式支持、工作原理、能力边界
+  - 新增 11 个单测（伽马临界值 df=1/2/10→p≈0.05、极值、合成均衡/偏斜直方图、退化 alpha、四通道汇总），累计 **66 测试全过**
+- **CI 状态**: run #46055349826 四平台全 success（windows-msvc/linux-musl/macos-x86_64/macos-aarch64），watch 退出码 0；仅 Node.js 20 弃用 annotation
+- **本地/云端运行结果**:
+  - OpenStego（1b,rgb,lsb 真实部分嵌入）：全图 p 被稀释到 0.06–0.32，但分块曲线前段 p=1.00，峰值判据正确输出三通道"疑似 LSB 嵌入 100/100"；fetch_run 云端 Windows 产物逐字节复现，退出码 0 无 PANIC
+  - 真实干净图 Steganography_original：三通道 p=0.0000，无误报
+  - flower_rgb3（实测载荷在 **bit3 非 LSB**）：bit0 卡方 p=0，正确印证"仅对 LSB 位平面敏感"的能力边界
+  - JPEG 输入被正确 bail 拒绝（提示改用 --jpeg-stego）；--chi-channel all 时恒定 alpha 正确跳过
+- **根因/认知**:
+  1. 合成随机像素图的 LSB 天然近 50/50 均衡，无法模拟真实照片 LSB 偏态，做负样本会误报——卡方攻击本质依赖真实图像统计先验，负样本须用真实照片，已删除无效合成图
+  2. 真实样本里 OpenStego 是部分嵌入，全图 p 钝化，必须靠分块曲线峰值才能检出，这是相对教科书"只算全图 chi2"的关键工程修正
+  3. clippy 1.100：needless_range_loop（改数组 fill）、chunks_exact_to_as_chunks（测试改 as_chunks_mut）、bool_comparison（改 !）、unused_mut
+- **能力红线**: 仅对顺序 LSB 位平面替换敏感；对随机/非顺序散布、非 LSB 位、调色板索引 BMP、极低比例嵌入、F5/steghide 等 DCT 算法无效；输出统计概率非确定结论，已在代码注释、CLI、README 声明
+- **下一步行动**: 卡方攻击达成且云端验证，仍在 agent/pass-crack 未合并 main。可选：Camouflage 直接还原（需先补全逆向/20MB key）、wbStego 提取、Node.js 20 action 升级
