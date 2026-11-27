@@ -56,6 +56,51 @@ pub enum DetectResult {
         even: bool,
     },
     FileType(String),
+    /// JPEG JSteg（DCT 域 LSB）提取结果
+    Jsteg {
+        /// 承载比特的可用交流系数总数（即提取比特数）
+        usable_coeffs: usize,
+        /// 打包后字节数
+        byte_len: usize,
+        /// 可打印明文预览（可能为空）
+        preview: String,
+    },
+    /// JPEG DCT 域隐写盲检测结果（F5 / steghide 启发式研判）
+    JpegDctStego {
+        /// 可疑度中文结论
+        verdict: String,
+        /// 启发式算法归因（F5 / steghide / 不确定）
+        guess: String,
+        /// 综合可疑度 0..=100
+        score: u8,
+        /// 待测图 AC 零值占比
+        zero_ratio: f64,
+        /// 校准参考图 AC 零值占比
+        calib_zero_ratio: f64,
+        /// 直方图归一化 L1 散度
+        histogram_divergence: f64,
+        /// 相邻系数共现矩阵 L1 散度（二阶特征）
+        cooccurrence_divergence: f64,
+        /// 校准是否成功
+        calibrated: bool,
+    },
+    /// PNG/BMP LSB 卡方（chi-square）攻击结果
+    ChiSquareLsb {
+        /// 中文结论（疑似 LSB 全嵌入 / 部分嵌入可疑 / 未见显著 LSB 均衡）
+        verdict: String,
+        /// 通道名（R/G/B/A）
+        channel: String,
+        /// 卡方上侧 p 值（0~1，越接近 1 越疑似 LSB 嵌入）
+        p_value: f64,
+        /// 卡方统计量
+        chi2: f64,
+        /// 自由度
+        df: usize,
+        /// 嵌入比例估计（p 首次达 0.95 的前缀进度，0 表示未达成）
+        embed_ratio: f64,
+        /// 可疑度 0..=100
+        score: u8,
+    },
 }
 
 impl fmt::Display for DetectResult {
@@ -170,7 +215,7 @@ impl fmt::Display for DetectResult {
                 }
             }
             DetectResult::FileType(desc) => {
-                // file 命令结果的颜色逻辑
+                // 内置文件类型识别结果的颜色逻辑（描述为 GNU file 风格英文，含下方关键词）
                 let colored_desc = if desc.to_lowercase().contains("dbase 3 data") {
                     // DBase 3 数据类型整体显示为灰色
                     format!("file: {}", desc).bright_black().to_string()
@@ -189,6 +234,96 @@ impl fmt::Display for DetectResult {
                     }
                 };
                 write!(f, "{}", colored_desc)
+            }
+            DetectResult::Jsteg {
+                usable_coeffs,
+                byte_len,
+                preview,
+            } => {
+                // 统计信息灰色，明文预览亮红色（无预览则提示原始字节）
+                let header = format!(
+                    "jsteg: 可用 AC 系数={} 提取比特={} 打包字节={}",
+                    usable_coeffs, usable_coeffs, byte_len
+                );
+                write!(f, "{}", header.bright_black())?;
+                if preview.is_empty() {
+                    write!(
+                        f,
+                        "{}",
+                        "（无可打印明文，详见 --jsteg-out 原始字节）".bright_black()
+                    )
+                } else {
+                    write!(f, " {}", format!("text: {:?}", preview).bright_red())
+                }
+            }
+            DetectResult::JpegDctStego {
+                verdict,
+                guess,
+                score,
+                zero_ratio,
+                calib_zero_ratio,
+                histogram_divergence,
+                cooccurrence_divergence,
+                calibrated,
+            } => {
+                // 统计指标灰色，高可疑结论亮红
+                let header = format!(
+                    "jpeg-dct: 结论={} 归因={} 可疑度={}/100",
+                    verdict, guess, score
+                );
+                let stats = format!(
+                    "（零占比 {:.3} vs 校准 {:.3}，一阶散度 {:.3}，块间共现散度 {:.3}，校准{}）",
+                    zero_ratio,
+                    calib_zero_ratio,
+                    histogram_divergence,
+                    cooccurrence_divergence,
+                    if *calibrated { "成功" } else { "不可用" }
+                );
+                if *score >= 50 {
+                    writeln!(f, "{}", header.bright_red())?;
+                } else {
+                    writeln!(f, "{}", header.yellow())?;
+                }
+                write!(f, "{}", stats.bright_black())?;
+                write!(
+                    f,
+                    " {}",
+                    "［启发式盲检测，非确定性结论，仅供研判］".bright_black()
+                )
+            }
+            DetectResult::ChiSquareLsb {
+                verdict,
+                channel,
+                p_value,
+                chi2,
+                df,
+                embed_ratio,
+                score,
+            } => {
+                let header = format!(
+                    "chi-square[{}]: {} 可疑度={}/100 p={:.4}",
+                    channel, verdict, score, p_value
+                );
+                // 按可疑度分级着色：≥95 亮红，≥50 黄色，其余灰色
+                if *score >= 95 {
+                    writeln!(f, "{}", header.bright_red())?;
+                } else if *score >= 50 {
+                    writeln!(f, "{}", header.yellow())?;
+                } else {
+                    writeln!(f, "{}", header.bright_black())?;
+                }
+                let stats = format!(
+                    "（chi2={:.3} df={} 嵌入比例估计={:.1}%）",
+                    chi2,
+                    df,
+                    embed_ratio * 100.0
+                );
+                write!(f, "{}", stats.bright_black())?;
+                write!(
+                    f,
+                    " {}",
+                    "［启发式盲检测，非确定性结论，仅供研判］".bright_black()
+                )
             }
         }
     }

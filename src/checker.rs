@@ -1,4 +1,3 @@
-use crate::file_cmd::FileCmd;
 use crate::hexdump;
 use crate::imageio::Image;
 use crate::opts::{BitOrder, Options, OrderSpec};
@@ -13,7 +12,7 @@ struct CheckState {
     wastitles: HashSet<String>,
     found_anything: bool,
     need_cr: bool,
-    file_cmd: Option<FileCmd>,
+    file_enabled: bool,
 }
 
 pub struct Checker<'a> {
@@ -33,7 +32,7 @@ impl<'a> Checker<'a> {
             wastitles: HashSet::new(),
             found_anything: false,
             need_cr: false,
-            file_cmd: FileCmd::new(self.options.file_cmd),
+            file_enabled: self.options.file_cmd,
         };
 
         // 元数据
@@ -466,15 +465,15 @@ impl<'a> Checker<'a> {
             return Some(r);
         }
 
-        // 整段文本检查应先于 file 命令，采用更小的最小长度（min_str_len - 2）
+        // 整段文本检查应先于内置文件类型识别，采用更小的最小长度（min_str_len - 2）
         let min_wholetext_len = self.options.min_str_len.saturating_sub(2);
         if let Some(r) = Self::whole_text_check(data, min_wholetext_len) {
             return Some(r);
         }
-        if let Some(ref mut fc) = state.file_cmd
-            && let Some(r) = fc.data2result(data)
+        if state.file_enabled
+            && let Some(desc) = crate::filetype::detect(data)
         {
-            return Some(r);
+            return Some(DetectResult::FileType(desc));
         }
         if let Some(r) = Checker::zlib_try(data) {
             return Some(r);

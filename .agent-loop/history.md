@@ -136,3 +136,99 @@
   5. `file` 验证交叉产物确为 Mach-O x86_64（CPU type 0x01000007），与 arm64 产物架构正确区分
 - **完整性校验**: 本地 HEAD = 远程 main = v0.1.0 标签提交 = 7cb0ec0；发布页 HTTP 200；附件直链 200 application/octet-stream；8 个附件（4 二进制 + 4 sha256）齐全
 - **下一步行动**: 发布目标达成，结束闭环。后续按需 P1（JPEG DCT 域 steghide/F5/stegpy）
+
+### Iteration #8 - 内置 file 类型识别，移除外部命令依赖（2026-11-27）
+- **Commit**: 1649664
+- **改动要点**:
+  - 新增 `src/filetype.rs`：纯 Rust 内置识别器，31 条魔数规则（图像/文档/压缩包/可执行/数据库，含 RIFF 按 FourCC 二次区分 WebP/WAV/AVI）+ UTF-16 LE/BE 与 ASCII/UTF-8 文本判定（shebang/XML/BOM）；`detect(&[u8]) -> Option<String>`，识别不了返回 None（等价旧 IGNORES 过滤）
+  - 删除 `src/file_cmd.rs`（std::process::Command 外部调用），补齐 Windows 原生无 file 命令的能力缺口；零新增依赖、三平台行为一致
+  - checker 的 CheckState 用 `file_enabled: bool` 替代 `Option<FileCmd>`，改调 `filetype::detect`；main.rs `mod filetype`、更新 `--file` 帮助文案；result.rs 高亮逻辑不变
+  - 描述统一英文小写关键词（png/jpeg/bitmap/pdf/zip/rar/7-zip），兼容 result.rs 的 `to_lowercase + starts_with` 高亮
+  - 新增 8 个单测，累计 29 个测试
+- **CI 状态**: run 45911982789（build-loop）四平台全 success（windows-msvc / linux-musl / macos-x86_64 交叉 / macos-aarch64），watch 退出码 0
+- **本地运行结果**: precheck 退出码 0、29/29 测试；fetch_run 拉 Windows 产物实测：合成 PNG+ZIP 二进制 extradata 输出 `file: zip archive data`，`--file=false` 时不输出，开关语义正确，无 PANIC/ERROR
+- **根因诊断（clippy 新版 lint）**:
+  1. `x % 2 != 0` 触发 manual_is_multiple_of → 改 `!x.is_multiple_of(2)`
+  2. 常量块大小 `chunks_exact(2)` 触发 chunks_exact_to_as_chunks → 改 `as_chunks::<2>().0`
+  3. 描述首字母大写导致 result.rs 小写 `starts_with` 高亮失效、测试失败 → 关键词描述统一小写
+- **下一步行动**: 目标达成，结束闭环。可选后续：Node.js 20 弃用警告（checkout/upload-artifact 升级）、P1 JPEG DCT 域算法
+
+### Iteration #9 - P1 首个 DCT 域功能：JPEG JSteg/LSB 检测（2026-11-27）
+- **Commit**: ee4a70b
+- **改动要点**:
+  - 新增纯 Rust 依赖 `libjpeg-turbo-rs` 0.9（无 C/FFI、no_std 兼容，默认 simd+std）；image/zune-jpeg 只输出像素不暴露 DCT，改用该库 `read_coefficients` 直接拿量化 DCT 系数（跳过 IDCT/色彩转换）
+  - 新增 `src/jsteg.rs`：JSteg 标准规则——跳过每块 DC(block[0]) 与值为 0/1/-1 的 AC，对其余 AC 取 `unsigned_abs() & 1`，按 分量→块→zigzag 顺序收集后 MSB-first 打包；支持 BE/LE 4 字节长度前缀解析与可打印明文预览；9 个纯函数单测
+  - `result.rs` 新增 `DetectResult::Jsteg{usable_coeffs,byte_len,preview}` 与 `jsteg:` 展示分支
+  - `main.rs` 新增 `--jsteg`/`--jsteg-out` 标志与 `run_jsteg`（FF D8 FF 魔数校验）；`--analyze` 增加 `[6/6] JPEG JSteg` 步骤替换原 P1 占位
+  - 新增黄金样本 `samples/jsteg_base.jpg`、`jsteg_embedded.jpg`（用同库 write_coefficients 做系数级注入，与提取端严格对称）
+- **CI 状态**: run 45967550381 四平台全 success；**Linux musl 静态链接通过**（新依赖最大风险点排除），watch 退出码 0
+- **本地运行结果**: precheck 退出码 0、38/38 测试（新增 9 个 jsteg）；本地与云端 Windows 产物均正确还原，提取字节前 37 字节与注入明文 `JSTEG_SECRET_FLAG_2026_CTF_PAYLOAD_OK` 逐字节一致，`--analyze` 的 [6/6] 分支正常触发，无 PANIC/ERROR
+- **根因诊断（clippy 新版 lint）**:
+  1. `0 | 1 | -1` OR 模式触发 manual_range_patterns → 改 `-1..=1`
+  2. 常量块 `chunks_exact(8)` 触发 chunks_exact_to_as_chunks → 改 `as_chunks::<8>()`
+  3. 关键工程决策：Python 侧无 jpegio（仅 PIL/numpy 像素级），无法做 DCT 系数注入；改用同 Rust 库的 write_coefficients 建临时注入工具生成样本，保证注入/提取同源对称，验证后删除工具
+- **下一步行动**: P1 首项达成，仍在 agent/pass-crack 未合并 main。可选后续：steghide/F5 检测、Node.js 20 action 升级、README 补充 JSteg 用法
+
+### Iteration #10 - P1 steghide/F5 JPEG DCT 盲检测（校准攻击）（2026-11-28）
+- **Commit**: c1e62f4
+- **改动要点**:
+  - 新增 `src/jpegsteg.rs`：纯 Rust 校准攻击（decompress→裁左上 4px→同质量 compress→read_coefficients），对亮度 AC 提取四类指标——零占比、一阶直方图归一化 L1 散度、块内相邻系数共现矩阵二阶 L1 散度（针对保持一阶统计的 steghide）、块效应偏离；四维加权评分 0-100，启发式区分 F5（零收缩主导）/steghide（二阶共现主导）；12 个纯函数单测
+  - `result.rs` 新增 `DetectResult::JpegDctStego` 与 `jpeg-dct:` 展示，固定附"启发式盲检测，非确定性结论，仅供研判"免责声明
+  - `main.rs` 新增 `--jpeg-stego`/`--stego-out`（可写完整文本报告）与 run_jpeg_stego；`--analyze` 的 JPEG 分支同时跑 JSteg 提取与 F5/steghide 盲检测
+  - 真实黄金样本：steghide_embedded/steghide_full（本机 steghide 0.6，回环验证）、f5_embedded（matthewgao/F5 Java 参考实现，用 Windows JDK21 + `--add-exports java.base/sun.security.provider=ALL-UNNAMED` 跑通，回环验证）
+- **CI 状态**: run 46039047855 四平台全 success（含 musl 校准重压缩 API 跨平台可用），watch 退出码 0；precheck 50/50 测试通过
+- **本地/云端运行结果（对照矩阵）**:
+  - F5 样本：93/100 高度可疑、准确归因 F5（零占比 0.540 vs 校准 0.236，收缩效应显著；文件比 cover 小 12696 字节）
+  - cover/jsteg/steghide：均 17-18 分低误报，校准成功
+- **根因诊断（steghide 检测局限，重要诚实结论）**:
+  1. steghide 用图论交换保持一阶直方图，chi-square 与一阶散度天然失效；满容量嵌入二阶共现散度仍仅 0.042，与 cover 的 0.043 无差异
+  2. 根因：steghide 嵌入后文件大小几乎不变（delta≈0/-17B），图论交换只动极少量系数且不增零；校准重压缩进一步把微弱扰动压进统计噪声
+  3. 无训练分类器（SRM/富模型 + SVM/CNN）时，纯启发式统计对低嵌入率 steghide 不敏感是学术界公认难点，非实现缺陷；评分通路本身经单测验证对强二阶扰动正确响应（score_cooccurrence_dominant 测试）
+  4. clippy：needless_borrow（去掉 calib_blocks 前多余 &）
+- **能力红线**: 本功能输出可疑度而非确定结论，不提取明文、不保证算法归因；已在代码注释、CLI 输出、--stego-out 报告中声明
+- **下一步行动**: 盲检测达成且边界清晰，仍在 agent/pass-crack 未合并 main。可选：训练型富模型分类器（超出纯 Rust 无依赖范围）、Node.js 20 action 升级、README 补 DCT 章节
+
+### Iteration #11 - 校准攻击修正：同量化表重压缩 + 显著性门控评分（2026-11-28）
+- **Commit**: 3273133
+- **改动要点**:
+  - 校准器重写：`calibrate` 改用 `encode::pipeline::compress_custom_quant`，复用原图 `JpegCoefficients.quant_tables` 的 slot0(luma)/slot1(chroma) 量化表（自然序，与编码器入参约定一致，无需 zigzag 转换），落实 Fridrich 校准"量化矩阵不变、仅 8×8 网格错位"的核心要求；替换原来固定 quality=92 的错误做法
+  - 评分模型重写：`score_report` 引入"显著性门控"——五维（零收缩30/共现25/一阶15/变化15/块效应15）各自越阈才计分，亚阈值校准噪声一律记 0，越阈后按超阈强度给 0.5~1.0 倍权重；阈值依据同表校准后真实样本重标（zero 0.02/hist 0.10/cooc 0.06/var 0.30/block 0.15）
+  - 归因：zero_lift≥0.02 判 F5（同表校准后非 F5 最大 zero_lift 仅 0.0011，F5 为 0.048，约 44 倍间隔）；零占比正常而共现/变化越阈判 steghide
+  - 新增低纹理非标准量化表黄金样本 steghide_smooth_base.jpg / steghide_smooth.jpg 与门控回归单测 `score_subthreshold_noise_does_not_accumulate`，累计 55 测试
+- **CI 状态**: run #46047990366 四平台全 success（windows-msvc / linux-musl / macos-x86_64 / macos-aarch64），watch 退出码 0；仅有 Node.js 20 弃用 annotation（基础设施，非失败）
+- **本地运行结果**: precheck 退出码 0、55/55 测试、fmt/clippy -D warnings 全过
+- **云端产物端到端（fetch_run 运行 #46047990366 Windows exe，均退出码 0 无 PANIC/ERROR）**:
+  - f5_embedded.jpg：99/100 高度可疑、归因 F5（零占比 0.540 vs 同表校准 0.492，一阶 0.115、共现 0.164）
+  - steghide_smooth_base.jpg（旧逻辑误报 67/100）：**0/100 Clean**，回归修复确认
+  - 其余 5 个非 F5 样本（jsteg cover/embedded、steghide 低/满容量、低纹理 steghide）全部 0/100 Clean
+- **根因诊断（关键认知）**:
+  1. 旧固定 Q92 校准在**非标准量化表**图上引入二次量化噪声：低纹理平滑图 luma 量化表 DC=5（远细于 Q92 标准表），用错表重压缩使校准零占比 0.954 偏离真实 0.968，单是零占比就虚高 +0.014，五维亚阈值偏差累加炸出 67 分假阳性
+  2. 同表重压缩后该图校准零占比回到 0.968006（与待测 0.968145 几乎相同），histDiv 0.0615→0.0156、coocDiv 0.0476→0.0215，假阳性信号消失
+  3. 旧"线性加权累加"模型的结构性缺陷：任何不显著的微小偏离都按比例给分，多维噪声叠加即误报；门控模型从机制上杜绝此类假阳性
+  4. F5 在同表校准下 zero_lift 虽从 0.304 收敛到 0.048（收缩效应部分被同表重压缩吸收），但仍 44 倍于非 F5 上限，配合一阶/共现越阈，综合 99 分，检测力不降反升
+- **诚实边界（保持不变）**: 高纹理图上的低嵌入率/满容量 steghide 与干净图各维特征无差异（同表校准后 cooc 0.021-0.023 vs cover 0.024），无训练富模型分类器时单图启发式无法区分，属学界公认难点；低纹理高嵌入率 steghide_smooth 与同源干净图在同表校准后同样不可分（均 0 分），不再靠二次量化噪声制造无统计学依据的"区分"
+- **环境备忘**: 本机 WSL 无 git 凭据助手且无 System32 PATH，直接 `git push` 会在不可见的账号密码提示上挂起；解法为 `GIT_TERMINAL_PROMPT=0` + 一次性 `https://x-access-token:<gh token>@...` URL 推送（token 不落仓库配置），fetch_run 前需 `export PATH` 补 /mnt/c/Windows/System32 与 WindowsPowerShell/v1.0
+- **下一步行动**: 盲检测假阳性根因修复且云端验证达成，仍在 agent/pass-crack 未合并 main。可选：Node.js 20 action 升级、README 补 DCT/盲检测章节
+
+### Iteration #12 - PNG/BMP LSB 卡方（chi-square）统计攻击（2026-11-28）
+- **Commit**: 9af1d20
+- **改动要点**:
+  - 新建 `src/chisq.rs`：纯 std 手写 Lanczos-7 `ln_gamma`、正则化下不完全伽马 `gammp`（x<a+1 级数展开，否则 Lentz 连分式，迭代 200、容差 3e-12），零新增依赖实现卡方上侧 p 值 `chi_pvalue=1-P(df/2,chi2/2)`
+  - 统计层：256 桶 `channel_histogram`、128 个 POC 配对的 `chi_square`（expected>0 过滤、df=k-1）、沿扫描线增量分块的 `analyze_channel`（p 值曲线 + 嵌入比例估计）、`analyze_image` 四通道汇总
+  - 双指标判定：除全图 p 外引入曲线峰值 `p_peak`，取 max(p_full,p_peak) 下结论，解决"前段嵌入后段原始"导致全图 p 被稀释的漏报；alpha 恒定（有效配对<2）自动标记 usable=false 跳过
+  - `result.rs` 新增 `DetectResult::ChiSquareLsb` 与分级着色 Display（≥95 红/≥50 黄/其余灰）+ 固定免责声明
+  - `main.rs` 新增 `--chi-square/--chi-channel(默认rgb,可all)/--chi-blocks(默认20)` 与 `run_chi_square`，挂入早返回链；`run_analyze` 第 6 步位图触发卡方，并把历史混用的 `[n/5]` 与 `[6/6]` 统一为运行期 `[n/6]`（位图/JPEG 第 6 步互斥）
+  - README 补独立章节、功能表、参数表、格式支持、工作原理、能力边界
+  - 新增 11 个单测（伽马临界值 df=1/2/10→p≈0.05、极值、合成均衡/偏斜直方图、退化 alpha、四通道汇总），累计 **66 测试全过**
+- **CI 状态**: run #46055349826 四平台全 success（windows-msvc/linux-musl/macos-x86_64/macos-aarch64），watch 退出码 0；仅 Node.js 20 弃用 annotation
+- **本地/云端运行结果**:
+  - OpenStego（1b,rgb,lsb 真实部分嵌入）：全图 p 被稀释到 0.06–0.32，但分块曲线前段 p=1.00，峰值判据正确输出三通道"疑似 LSB 嵌入 100/100"；fetch_run 云端 Windows 产物逐字节复现，退出码 0 无 PANIC
+  - 真实干净图 Steganography_original：三通道 p=0.0000，无误报
+  - flower_rgb3（实测载荷在 **bit3 非 LSB**）：bit0 卡方 p=0，正确印证"仅对 LSB 位平面敏感"的能力边界
+  - JPEG 输入被正确 bail 拒绝（提示改用 --jpeg-stego）；--chi-channel all 时恒定 alpha 正确跳过
+- **根因/认知**:
+  1. 合成随机像素图的 LSB 天然近 50/50 均衡，无法模拟真实照片 LSB 偏态，做负样本会误报——卡方攻击本质依赖真实图像统计先验，负样本须用真实照片，已删除无效合成图
+  2. 真实样本里 OpenStego 是部分嵌入，全图 p 钝化，必须靠分块曲线峰值才能检出，这是相对教科书"只算全图 chi2"的关键工程修正
+  3. clippy 1.100：needless_range_loop（改数组 fill）、chunks_exact_to_as_chunks（测试改 as_chunks_mut）、bool_comparison（改 !）、unused_mut
+- **能力红线**: 仅对顺序 LSB 位平面替换敏感；对随机/非顺序散布、非 LSB 位、调色板索引 BMP、极低比例嵌入、F5/steghide 等 DCT 算法无效；输出统计概率非确定结论，已在代码注释、CLI、README 声明
+- **下一步行动**: 卡方攻击达成且云端验证，仍在 agent/pass-crack 未合并 main。可选：Camouflage 直接还原（需先补全逆向/20MB key）、wbStego 提取、Node.js 20 action 升级

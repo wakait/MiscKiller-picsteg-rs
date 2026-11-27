@@ -11,3 +11,6 @@ Cargo.lock
 
 # 闭环工作流本地日志与临时产物
 .local-logs/
+
+# IDE 配置目录
+.trae/
