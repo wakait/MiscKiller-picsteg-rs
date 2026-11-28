@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 mod opts;
 use opts::{Options, decode_param_string, merge_cli_into_options};
+mod bitplane;
 mod carve;
 mod checker;
 mod chisq;
@@ -202,6 +203,18 @@ struct Cli {
     #[arg(long = "chi-blocks", default_value_t = 20)]
     chi_blocks: usize,
 
+    /// 导出各通道位平面（bit plane）为黑白 PNG（仅 PNG/BMP），需配合 --bitplane-out
+    #[arg(long = "bitplanes", action = ArgAction::SetTrue)]
+    bitplanes: bool,
+
+    /// 位平面导出目录（配合 --bitplanes，不存在会自动创建）
+    #[arg(long = "bitplane-out")]
+    bitplane_out: Option<PathBuf>,
+
+    /// 要导出的位平面：all（bit0-7）、单个 0-7 或逗号列表，默认 all；通道复用 --chi-channel
+    #[arg(long = "bp-bits", default_value = "all")]
+    bp_bits: String,
+
     /// 一键 CTF 流水线：元数据→明文→文件雕刻→(PNG)宽高 CRC→LSB 分析
     #[arg(long = "analyze", action = ArgAction::SetTrue)]
     analyze: bool,
@@ -252,6 +265,11 @@ fn main() -> anyhow::Result<()> {
     // PNG/BMP LSB 卡方统计攻击
     if cli.chi_square {
         return run_chi_square(&cli);
+    }
+
+    // 位平面可视化导出
+    if cli.bitplanes {
+        return run_bitplanes(&cli);
     }
 
     // 通用文件雕刻/分离
@@ -702,6 +720,43 @@ fn run_chi_square(cli: &Cli) -> anyhow::Result<()> {
             println!("{}", line.bright_black());
         }
     }
+    Ok(())
+}
+
+/// 位平面（bit plane）可视化导出：把各通道指定位渲染为黑白 PNG
+fn run_bitplanes(cli: &Cli) -> anyhow::Result<()> {
+    let raw = std::fs::read(&cli.input)?;
+    // 仅支持可完整解码为像素的位图（PNG/BMP）；JPEG 走 DCT 域，像素位平面不适用
+    let is_png = raw.starts_with(b"\x89PNG");
+    let is_bmp = raw.len() >= 2 && &raw[0..2] == b"BM";
+    if !is_png && !is_bmp {
+        anyhow::bail!("--bitplanes 仅支持 PNG/BMP 位图（JPEG 属 DCT 域，无像素位平面概念）");
+    }
+
+    let out_dir = cli
+        .bitplane_out
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("--bitplanes 必须配合 --bitplane-out <导出目录> 使用"))?;
+
+    let img = imageio::Image::load(&cli.input)?;
+    // 通道复用 --chi-channel 的解析，位用 --bp-bits
+    let channels = parse_chi_channels(&cli.chi_channel);
+    let bits = bitplane::parse_bits(&cli.bp_bits);
+    let stem = cli
+        .input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("image");
+
+    let count = bitplane::export_planes(&img, stem, &channels, &bits, out_dir)?;
+    println!(
+        "[i] 已导出 {} 张位平面 PNG 到 {:?}（通道 {}，位 {}）",
+        count,
+        out_dir,
+        channels.len(),
+        bits.len()
+    );
+    println!("[-] 位平面为人工可视化材料，非确定性结论，请结合 LSB 提取与卡方 p 值研判");
     Ok(())
 }
 
