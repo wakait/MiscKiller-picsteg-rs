@@ -248,3 +248,24 @@
   2. `gh release download --pattern` 需匹配完整资产名（`*windows*` 而非 `windows*`）
   3. tag 在 PR #15 合并前打出，故 v0.2.0 二进制内 anyhow 仍为 1.0.100（lock-only 补丁，无 CVE，无需重切 tag）
 - **下一步行动**: **P1 steghide 口令爆破（stegseek 对标）立项**——纯 Rust 复刻 steghide 提取通路（口令 SHA-1 派生 → Blowfish-CBC 头部解密校验 → mhash 型 PRNG 采样位置选择 → DCT 系数回读），难点在采样选择与嵌入算法的逐位一致性，验证以 `samples/steghide_embedded.jpg` 回环 + 与 stegseek 交叉比对，预估 2–3 个迭代。其余候选：wbStego 提取、Node.js 20→24 actions 升级
+
+### Iteration #14 - PNG 结构完整性审计（--png-audit）（2026-11-28）
+- **Commit**: e385a4d（分支 agent/png-audit，基于 v0.2.0 main 切出）
+- **背景/分支说明**: 开工时发现工作区在 **main**（agent/pass-crack 已经 PR #16 合并并发版 v0.2.0），且工作区文件被 Windows 检出转成 CRLF（HEAD 为纯 LF），`git diff` 出现上千行纯行尾噪音。处理：新建 `agent/png-audit` 功能分支隔离；用 `sed -i 's/\r$//'` 把 4 个相关文件转回 LF 后再暂存，使提交只含 722 行真实改动；另注意上一轮位平面（bitplane）功能未随 PR 进入 main（仅存于 agent/pass-crack 分支），本次不擅自补回。
+- **改动要点**:
+  - 新建 `src/pngaudit.rs`：零 IO 纯函数 `audit(raw)->PngAuditReport`，自行从原始字节逐块重解析（imageio::PngChunk 不保留 CRC/偏移，不复用），带长度越界与截断防护、绝不 panic
+  - 核心规则：签名校验；每块 CRC32 重算比对（类型+数据，覆盖 IEND）；IHDR 首位/唯一 + 宽高(1..2^31-1) + 位深×颜色类型合法组合 + 压缩/过滤/隔行方法；IEND 末位/唯一 + IEND 后追加字节告警；多 IDAT 连续性；首字母大写的非标准关键块告警（ancillary 小写首字母静默）
+  - 数据结构 `Severity{Error,Warn,Info}`/`AuditIssue{severity,chunk,offset,message}`/`PngAuditReport{chunk_count,issues}`，核心不依赖 colored，着色留 main 层
+  - `pngcrack` 的 `crc32`/`crc32_table` 改 `pub(crate)` 复用，零新增依赖；新模块内 `crc32_chunk` 零拷贝增量算 CRC
+  - `main.rs` 新增 `--png-audit` 与 `run_png_audit`（分级 bright_red/yellow/bright_black + 汇总计数），挂入早返回链；`--analyze` 位图流水线由 6 步扩为 **7 步**（位图 total=7、JPEG 保持 6），第 7 步仅 PNG 实跑、BMP 提示跳过
+  - README 补审计小节（含输出示例）、功能表、参数表、工作原理、能力边界
+  - 新增 10 个单测（合法最小 PNG、坏签名、IEND CRC 篡改、尾部追加、IHDR 非首/重复/非法字段/零宽高、IDAT 连续与夹断、关键块 vs ancillary、截断不 panic），累计 **76 测试全过**
+- **CI 状态**: run #46150639995 四平台全 success（windows-msvc/linux-musl/macos-x86_64/macos-aarch64），watch 退出码 0；仅 Node.js 20 弃用 annotation。注意 build-loop 仅触发 `dev`/`agent/**`，首个分支名 feature/png-audit 不触发，已改推 agent/png-audit 并删除远端旧分支
+- **本地/云端真机对照**:
+  - openstego_q2.png → IEND CRC32 失配（文件 AE426034 vs 计算 AE426082）+ IEND 后 100 字节，错误 1 警告 1
+  - camouflage.png / camouflage-password.png → IEND 后 874 字节 Warn；extradata.png → 7 字节 Warn
+  - prime.png / Steganography_original.png / cats.png（含 vpAg ancillary）→ 无异常、零误报
+  - BMP 输入独立命令被正确 bail 拒绝；`--analyze` 下 BMP 第 7 步显示"非 PNG，跳过"
+  - fetch_run 云端 Windows 产物（run #46150639995）对 openstego_q2 复现同样两条结论，退出码 0 无 PANIC
+- **能力红线**: 只校验 PNG 容器结构（是否被篡改/拼接），不检测像素 LSB 隐写（卡方/位平面职责），不做 PLTE/tRNS/APNG 深度语义与 zlib 内部完整性；ancillary 非标准块仅违规时提示，不代表恶意，需结合 carve/strings/LSB 交叉验证
+- **下一步行动**: 待本分支评审合并；候选 P1 steghide 口令爆破、wbStego 提取、Node.js 20→24 actions 升级、评估是否补回未合并的位平面功能
