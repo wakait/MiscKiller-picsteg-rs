@@ -1,6 +1,6 @@
 [package]
 name = "misc_killer_picsteg_rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "CTF picture steganography all-in-one toolkit (LSB, crack, carve, metadata)"
 
