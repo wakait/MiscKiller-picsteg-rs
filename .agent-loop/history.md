@@ -232,3 +232,24 @@
   3. clippy 1.100：needless_range_loop（改数组 fill）、chunks_exact_to_as_chunks（测试改 as_chunks_mut）、bool_comparison（改 !）、unused_mut
 - **能力红线**: 仅对顺序 LSB 位平面替换敏感；对随机/非顺序散布、非 LSB 位、调色板索引 BMP、极低比例嵌入、F5/steghide 等 DCT 算法无效；输出统计概率非确定结论，已在代码注释、CLI、README 声明
 - **下一步行动**: 卡方攻击达成且云端验证，仍在 agent/pass-crack 未合并 main。可选：Camouflage 直接还原（需先补全逆向/20MB key）、wbStego 提取、Node.js 20 action 升级
+
+### Iteration #13 - 位平面（bit plane）可视化导出（2026-11-28）
+- **Commit**: a5f0d93
+- **改动要点**:
+  - 新建 `src/bitplane.rs`：纯函数 `bit_plane(pixels,w,h,ch,bit)->Vec<u8>` 提取单通道指定位为 0/255 的 L8 缓冲（debug_assert 限定 ch<4、bit<8，索引约定与 chisq 一致 `pixels[i*4+ch]`、`(v>>bit)&1`）；`parse_bits` 解析 all/单值/逗号列表并去重排序过滤；`export_planes` 用 `image::save_buffer(.., ExtendedColorType::L8)` 编码黑白 PNG，命名 `{stem}_{R|G|B|A}_bit{0..7}.png`，自动建目录
+  - `main.rs` 新增 `--bitplanes`/`--bitplane-out <目录>`/`--bp-bits <all|0-7|列表>`，通道**复用 `--chi-channel`**（默认 rgb=24 张，all=32 张）；`run_bitplanes` 做 PNG/BMP 魔数校验、缺失目录 bail；不挂入 `--analyze`（产出文件非终端结论）
+  - README 补位平面章节、功能表、参数表、工作原理与能力边界
+  - 新增 7 个单测（已知字节取 bit0/bit7/bit1、缓冲长度、通道隔离、奇偶值 LSB、parse_bits 去重排序过滤回退），累计 **73 测试全过**
+- **CI 状态**: run #46105111307 四平台全 success（windows-msvc/linux-musl/macos-x86_64/macos-aarch64），watch 退出码 0；仅 Node.js 20 弃用 annotation
+- **本地/云端运行结果**:
+  - flower_rgb3：全量 all 导 32 张、默认 rgb 导 24 张、单通道单位导 1 张，文件数精确；导出图经 Pillow 校验均为 mode=L、尺寸 270×180 与原图一致、取值仅 {0,255}
+  - 位平面白像素占比印证载荷定位：bit0=0.000（该图 LSB 无载荷）、**bit3=0.526（已知载荷所在平面，呈近随机结构化数据）**、bit7=0.412（高位接近图像轮廓）
+  - plte1.png（索引色）经 EXPAND 归一化后正常导 32 张；cats.png 的 alpha 平面、ndh2k12 BMP 均成功
+  - 错误处理：缺 `--bitplane-out` 给中文 bail、JPEG 被正确拒绝
+  - fetch_run 云端 Windows 产物（run #46105111307）导出 4 张 bit0 平面，命名/张数正确，退出码 0 无 PANIC
+- **根因/认知**:
+  1. image 0.25 在现有 png feature 下 `save_buffer + ExtendedColorType::L8` 即可编码灰度 PNG（产物 IHDR color type=0），零新增依赖
+  2. 调色板 PNG（color type 3）经 image crate 的 EXPAND 转换后 `to_rgba8()` 同样得到 RGBA8，位平面逻辑无需分支
+  3. 位平面与卡方是互补关系：卡方给统计概率、位平面给人工可视化；flower_rgb3 载荷在 bit3 而非 LSB，恰好演示"位平面能发现卡方覆盖不到的高位隐写"
+- **能力红线**: 输出为人工可视化材料非确定结论；仅反映像素域位平面，对 JPEG DCT 域（F5/steghide/JSteg）、调色板索引隐写不适用，加密/压缩载荷可能仅呈随机噪点；已在代码注释、CLI、README 声明
+- **下一步行动**: 位平面可视化达成且云端验证，仍在 agent/pass-crack 未合并 main。可选：PNG 结构完整性审计、Camouflage 还原、wbStego 提取、Node.js 20 action 升级
