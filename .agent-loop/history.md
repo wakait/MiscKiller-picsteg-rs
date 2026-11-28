@@ -232,3 +232,19 @@
   3. clippy 1.100：needless_range_loop（改数组 fill）、chunks_exact_to_as_chunks（测试改 as_chunks_mut）、bool_comparison（改 !）、unused_mut
 - **能力红线**: 仅对顺序 LSB 位平面替换敏感；对随机/非顺序散布、非 LSB 位、调色板索引 BMP、极低比例嵌入、F5/steghide 等 DCT 算法无效；输出统计概率非确定结论，已在代码注释、CLI、README 声明
 - **下一步行动**: 卡方攻击达成且云端验证，仍在 agent/pass-crack 未合并 main。可选：Camouflage 直接还原（需先补全逆向/20MB key）、wbStego 提取、Node.js 20 action 升级
+
+### Iteration #13 - 固化收口：PR #16 合并 + v0.2.0 发布与哈希核验（2026-11-28）
+- **改动要点**:
+  - PR #16（Iteration #8–#12 全部 12 提交）合并 main：完整 ci.yml 门禁（3 平台 fmt/clippy/test）**首次覆盖** agent/pass-crack 分支（此前仅 build-loop 构建），全绿后 merge commit `906b1f5`
+  - `.trae/` IDE 目录入 .gitignore（`728f413`）；PR #15（anyhow 1.0.100→1.0.105，lock-only 常规补丁，6 检查全绿）squash 合并（`2043a7c`）
+  - Cargo.toml/Cargo.lock bump 0.2.0（`0cf6871`）+ 注释 tag `v0.2.0` 触发 release.yml
+- **CI 状态**: 发布 run 46148473699 completed/success，四平台二进制 + .sha256 sidecar 全部产出；耗时 >15 分钟（v0.1.0 仅 ~2 分钟），macos-x86_64/windows/linux 三路 runner 排队所致，macos-aarch64 先行完成
+- **发布产物核验（fetch 下载实测）**:
+  - Windows exe SHA-256 `32dfc747fb3c67ef6585d0c8221d86cd4a0ff062a4d50e1dce82c5cb4fbe33b4` 与官方 sidecar 一致；留档 `02-Misc/stegecracker/_verify_v020/`
+  - 黄金样本回环全过：卡方 openstego_send 三通道 100/100、JSteg 明文 `JSTEG_SECRET_FLAG_2026_CTF_PAYLOAD_OK` 逐字提取、F5 盲检测 99/100 归因 F5、干净图 steghide_smooth_base 0/100，退出码全 0
+- **GATE 登记**: `00-Docs/reports/备赛工具清单与安全审查报告_v0.1.md` 3.1 加更新块 + 3.2 第 10 行同步——供应链层已可核验（自有 Release + sidecar），**GATE 维持 RECHECK**，缺隔离 VM 零外联首跑，五线未全过前禁带赛场
+- **环境备忘**:
+  1. 本机 Windows git push 无凭据助手会挂起，用一次性 token URL `https://x-access-token:$(gh auth token)@github.com/...` 推送（与 #11 WSL 结论同源）
+  2. `gh release download --pattern` 需匹配完整资产名（`*windows*` 而非 `windows*`）
+  3. tag 在 PR #15 合并前打出，故 v0.2.0 二进制内 anyhow 仍为 1.0.100（lock-only 补丁，无 CVE，无需重切 tag）
+- **下一步行动**: **P1 steghide 口令爆破（stegseek 对标）立项**——纯 Rust 复刻 steghide 提取通路（口令 SHA-1 派生 → Blowfish-CBC 头部解密校验 → mhash 型 PRNG 采样位置选择 → DCT 系数回读），难点在采样选择与嵌入算法的逐位一致性，验证以 `samples/steghide_embedded.jpg` 回环 + 与 stegseek 交叉比对，预估 2–3 个迭代。其余候选：wbStego 提取、Node.js 20→24 actions 升级
