@@ -18,6 +18,7 @@ mod metadata;
 mod pngcrack;
 mod result;
 use result::DetectResult;
+mod steghidecrack;
 mod strings;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, ValueEnum)]
@@ -134,11 +135,15 @@ struct Cli {
     #[arg(long = "crack", action = ArgAction::SetTrue)]
     crack: bool,
 
-    /// 爆破字典文件，每行一个候选密码（配合 --crack）
+    /// 启用 steghide JPEG 口令字典爆破（stegseek 式 magic 快速校验，仅输出口令，仅 JPEG）
+    #[arg(long = "steghide-crack", action = ArgAction::SetTrue)]
+    steghide_crack: bool,
+
+    /// 爆破字典文件，每行一个候选密码（配合 --crack / --steghide-crack）
     #[arg(long = "wordlist")]
     wordlist: Option<PathBuf>,
 
-    /// 命中后将明文写入该文件（配合 --crack）
+    /// 命中后将明文写入该文件（配合 --crack；--steghide-crack 暂不产出明文）
     #[arg(long = "crack-out")]
     crack_out: Option<PathBuf>,
 
@@ -217,6 +222,11 @@ fn main() -> anyhow::Result<()> {
     // 口令爆破模式：独立于原有检测/提取流程
     if cli.crack {
         return run_crack(&cli);
+    }
+
+    // steghide JPEG 口令 magic 爆破模式
+    if cli.steghide_crack {
+        return run_steghide_crack(&cli);
     }
 
     // 一键 CTF 流水线（内部有序调用各分析模块）
@@ -361,6 +371,36 @@ fn main() -> anyhow::Result<()> {
     let _ = c.check();
 
     Ok(())
+}
+
+/// 执行 steghide JPEG 口令 magic 字典爆破（stegseek 式快速校验，仅还原口令）
+fn run_steghide_crack(cli: &Cli) -> anyhow::Result<()> {
+    let wordlist = cli
+        .wordlist
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("--steghide-crack 模式必须提供 --wordlist <字典文件>"))?;
+
+    let hit = steghidecrack::crack_steghide(&cli.input, wordlist)?;
+    match hit {
+        Some(hit) => {
+            println!(
+                "{} password={:?}（共尝试 {} 个候选）",
+                "[+] steghide 口令命中：".bright_green().bold(),
+                hit.password,
+                hit.tried
+            );
+            println!(
+                "{}",
+                "[i] magic 校验为高置信候选（24-bit，存在理论假阳性），可用 `steghide info -p <口令>` 复核；明文提取将在后续版本支持。"
+                    .bright_black()
+            );
+            Ok(())
+        }
+        None => {
+            eprintln!("[-] 字典耗尽，未找到正确 steghide 口令");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// 执行 OpenStego 字典爆破

@@ -18,6 +18,9 @@ aes = "0.8"
 cbc = "0.1"
 cipher = { version = "0.4", features = ["block-padding"] }
 libjpeg-turbo-rs = "0.9.0"
+# steghide magic 爆破：仅需口令 MD5 派生 PRNG seed。该 crate 零传递依赖、
+# 不依赖 digest 框架，与现有 sha2/aes 的 digest 0.10 零冲突（勿用 RustCrypto 的 md-5 0.11）。
+md5 = "0.8"
 
 # 云端构建闭环专用：接近 release 性能，但保留调试符号与行号，
 # 配合 RUST_BACKTRACE=1 可在云端/本地复现 panic 时定位到源码行。

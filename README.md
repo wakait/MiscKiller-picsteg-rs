@@ -20,6 +20,7 @@
 | 文件雕刻/分离 | foremost、binwalk | 内置 13 种文件签名，识别追加或嵌套的嵌入文件并可导出 |
 | PNG 宽高爆破 | stegsolve | 基于 IHDR 的 CRC32 还原被篡改的真实宽高，并可写回修复 |
 | 加密载荷爆破 | stegseek | 针对 OpenStego 载荷进行字典攻击（PBKDF2 + AES） |
+| steghide 口令爆破 | stegseek | 对 steghide JPEG 做 stegseek 式 magic 快速校验字典攻击（MD5 + LCG，无需 AES 解密，仅还原口令） |
 | JPEG JSteg 提取 | jsteg | 读取量化 DCT 交流系数的 LSB，确定性提取 JSteg 隐写载荷 |
 | JPEG DCT 盲检测 | steghide/F5 分析 | 基于校准攻击的启发式评分，研判 F5/steghide 等对卡方免疫的算法 |
 | 一键综合分析 | 综合 | 按实战顺序串联上述检查，单命令输出完整结论 |
@@ -124,6 +125,25 @@ misc_killer_picsteg_rs --crack --wordlist 字典.txt 加密图片.png
 # 命中后将解密明文写入文件
 misc_killer_picsteg_rs --crack --wordlist 字典.txt --crack-out 明文.bin 加密图片.png
 ```
+
+### steghide JPEG 口令爆破
+
+针对用 `steghide embed` 加密嵌入的 JPEG（CTF 常见），工具对标 stegseek 做 **magic 快速校验**：用每个候选口令的 MD5 派生 PRNG seed，复现 steghide 在 DCT 系数上的采样路径，校验其中的 24-bit magic——整个过程**不做 AES 解密、不还原明文**，单候选开销极低，适合大字典。
+
+```bash
+misc_killer_picsteg_rs --steghide-crack --wordlist 字典.txt 隐写.jpg
+```
+
+输出示例（命中正确口令）：
+
+```text
+[i] 可用非零 DCT 系数（numSamples）= 6744，magic 需采样 72 个
+[+] 命中！共尝试 4 个密码
+[+] steghide 口令命中： password="ctf123"（共尝试 4 个候选）
+[i] magic 校验为高置信候选（24-bit，存在理论假阳性），可用 `steghide info -p <口令>` 复核；明文提取将在后续版本支持。
+```
+
+> **能力边界**：该模式仅支持 **JPEG**，仅输出**口令**、不还原嵌入明文（完整 AES-CBC 解密与 zlib 解压留待后续版本）；magic 为 24-bit 概率校验，存在约 2^-24 的理论假阳性，建议用 `steghide info -p` 或 `stegseek` 复核；能否命中取决于字典是否包含正确口令。该模式不挂入 `--analyze`（爆破依赖外部字典，属主动攻击）。
 
 ## LSB 卡方（chi-square）统计攻击
 
@@ -249,8 +269,9 @@ jpeg-dct: 结论=未发现明显异常 归因=不确定 可疑度=0/100
 | `--ihdr-max <N>` | 宽高爆破的候选上限，默认 65535 |
 | `--fix-ihdr-out <路径>` | 将修复后的 PNG 写入该路径 |
 | `--crack` | 启用 OpenStego 字典爆破 |
-| `--wordlist <文件>` | 爆破所用字典文件 |
-| `--crack-out <路径>` | 将解密得到的明文写入该路径 |
+| `--steghide-crack` | 启用 steghide JPEG 口令 magic 快速校验爆破（仅输出口令，仅 JPEG） |
+| `--wordlist <文件>` | 爆破所用字典文件（配合 `--crack` / `--steghide-crack`） |
+| `--crack-out <路径>` | 将 OpenStego 解密得到的明文写入该路径（`--steghide-crack` 暂不产出明文） |
 | `--jsteg` | 启用 JPEG JSteg（DCT 域 LSB）检测与载荷提取 |
 | `--jsteg-out <路径>` | 将 JSteg 提取的原始字节写入该路径 |
 | `--jpeg-stego` | 启用 JPEG DCT 域 F5/steghide 启发式盲检测 |
@@ -272,6 +293,7 @@ jpeg-dct: 结论=未发现明显异常 归因=不确定 可疑度=0/100
 - **宽高爆破**：PNG 的 IHDR 块自带 CRC32 校验。篡改宽高会使校验失配，工具遍历候选宽高并重算 CRC，找到与文件内校验值一致的组合即为真实尺寸。
 - **文件雕刻**：依据各类文件的固定起始魔数（及部分格式的结束标记）在原始字节中定位嵌入文件，不依赖文件扩展名。
 - **字典爆破**：OpenStego 使用固定盐值与低迭代次数的 PBKDF2 派生密钥，再以 AES-CBC 加密。工具逐个尝试字典中的密码，通过填充合法性与解压结果判断是否命中。
+- **steghide 口令爆破**：对每个候选口令计算 MD5，把 16 字节摘要按 4 个小端 u32 异或折叠为 PRNG seed；再用 32 位 LCG（A=1367208549，C=1，模 2³²）复现 steghide 在非零 DCT 系数（含 DC，仅跳过零系数）上的采样路径，每 3 个采样聚成 1 bit，与嵌在系数里的 24-bit magic 逐位比对。无需 AES 解密即可高置信判定口令，命中后由用户用 steghide/stegseek 复核并提取明文。
 - **JSteg 提取**：直接读取量化后的 DCT 系数，跳过 DC 与 `0/1/-1` 的 AC 系数，对其余系数取绝对值最低位，按分量、块、zigzag 顺序还原比特流并打包为字节。
 - **DCT 盲检测**：对裁剪后用同一量化表重压缩得到的「校准参考图」，比较其与待测图在零系数占比、直方图、块间共现、块间变化、块效应五个维度的偏离，经显著性门控汇总为 0–100 的可疑度并启发式归因。
 
@@ -284,7 +306,7 @@ jpeg-dct: 结论=未发现明显异常 归因=不确定 可疑度=0/100
 答：工具会先做宽度、高度两条线性扫描，覆盖绝大多数“只改宽或只改高”的题目，速度很快；仅当两者同时被改时才进入二维遍历，可通过 `--ihdr-max` 限制上限来控制耗时。
 
 **问：字典爆破一定能成功吗？**
-答：不能。爆破成功率取决于字典是否包含正确密码。OpenStego 的密钥派生迭代次数很低，因此单条候选的验证开销很小，适合大字典快速尝试。
+答：不能。爆破成功率取决于字典是否包含正确密码。OpenStego 的密钥派生迭代次数很低，因此单条候选的验证开销很小，适合大字典快速尝试。steghide 模式更进一步，只做 MD5 + 轻量 PRNG 的 magic 校验、不做 AES 解密，单候选开销极低；但它输出的是高置信口令候选（24-bit magic 存在约 2^-24 理论假阳性），且本版本不还原明文，建议用 `steghide info -p` 或 `stegseek` 复核。
 
 **问：雕刻出的文件为什么有的延伸到了文件末尾？**
 答：像 RAR、7z、ELF 这类格式没有简单可靠的结束标记，工具会将其边界标记为当前数据末尾，属预期行为，可结合偏移与上下文进一步判断。
