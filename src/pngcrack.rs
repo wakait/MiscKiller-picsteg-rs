@@ -14,7 +14,7 @@ pub struct IhdrGuess {
 }
 
 // 标准 CRC32（IEEE 802.3，与 PNG/zlib 一致），查表实现避免额外依赖
-fn crc32_table() -> [u32; 256] {
+pub(crate) fn crc32_table() -> [u32; 256] {
     let mut table = [0u32; 256];
     let mut n = 0;
     while n < 256 {
@@ -34,7 +34,7 @@ fn crc32_table() -> [u32; 256] {
     table
 }
 
-fn crc32(data: &[u8]) -> u32 {
+pub(crate) fn crc32(data: &[u8]) -> u32 {
     let table = crc32_table();
     let mut crc = 0xFFFF_FFFFu32;
     for &b in data {

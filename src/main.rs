@@ -15,6 +15,7 @@ mod imageio;
 mod jpegsteg;
 mod jsteg;
 mod metadata;
+mod pngaudit;
 mod pngcrack;
 mod result;
 use result::DetectResult;
@@ -202,6 +203,10 @@ struct Cli {
     #[arg(long = "chi-blocks", default_value_t = 20)]
     chi_blocks: usize,
 
+    /// PNG 结构完整性审计（CRC/块顺序/IHDR 合法性/IEND 后追加数据，仅 PNG）
+    #[arg(long = "png-audit", action = ArgAction::SetTrue)]
+    png_audit: bool,
+
     /// 一键 CTF 流水线：元数据→明文→文件雕刻→(PNG)宽高 CRC→LSB 分析
     #[arg(long = "analyze", action = ArgAction::SetTrue)]
     analyze: bool,
@@ -252,6 +257,11 @@ fn main() -> anyhow::Result<()> {
     // PNG/BMP LSB 卡方统计攻击
     if cli.chi_square {
         return run_chi_square(&cli);
+    }
+
+    // PNG 结构完整性审计
+    if cli.png_audit {
+        return run_png_audit(&cli);
     }
 
     // 通用文件雕刻/分离
@@ -705,16 +715,69 @@ fn run_chi_square(cli: &Cli) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// PNG 结构完整性审计（CRC/块顺序/IHDR 合法性/IEND 后追加数据）
+fn run_png_audit(cli: &Cli) -> anyhow::Result<()> {
+    let raw = std::fs::read(&cli.input)?;
+    if !raw.starts_with(b"\x89PNG\r\n\x1a\n") {
+        anyhow::bail!("--png-audit 仅支持 PNG 输入（缺少 89 50 4E 47 签名）");
+    }
+
+    let report = pngaudit::audit(&raw);
+    if report.issues.is_empty() {
+        println!(
+            "{}",
+            format!("[-] 未发现结构异常（共解析 {} 个块）", report.chunk_count).green()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "[i] 共解析 {} 个块，发现 {} 个问题：",
+        report.chunk_count,
+        report.issues.len()
+    );
+    for issue in &report.issues {
+        let chunk = issue
+            .chunk
+            .map(|c| String::from_utf8_lossy(&c).to_string())
+            .unwrap_or_else(|| "文件".to_string());
+        let line = format!(
+            "  [{}] offset={:<8} {}: {}",
+            issue.severity.label(),
+            issue.offset,
+            chunk,
+            issue.message
+        );
+        match issue.severity {
+            pngaudit::Severity::Error => println!("{}", line.bright_red()),
+            pngaudit::Severity::Warn => println!("{}", line.yellow()),
+            pngaudit::Severity::Info => println!("{}", line.bright_black()),
+        }
+    }
+    println!(
+        "{}",
+        format!(
+            "汇总：错误 {} 警告 {} 信息 {}",
+            report.count(pngaudit::Severity::Error),
+            report.count(pngaudit::Severity::Warn),
+            report.count(pngaudit::Severity::Info)
+        )
+        .bright_black()
+    );
+    Ok(())
+}
+
 /// 一键 CTF 隐写分析流水线，按实战顺序串联各检查器
 fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
     let banner = |s: &str| println!("\n{} {s}", "===".green().bold());
     let raw = std::fs::read(&cli.input)?;
 
-    // 运行期计算总步数：位图（PNG/BMP）含卡方步共 6 步；JPEG 走 DCT 域共 6 步，
-    // 但二者第 4/6 步按格式互斥触发，编号始终连续且分母正确，消除历史 [n/5] 与 [6/6] 混用。
+    // 运行期计算总步数：位图（PNG/BMP）含卡方与 PNG 审计共 7 步；JPEG 走 DCT 域共 6 步。
+    // 第 4/6/7 步按格式互斥触发，编号始终连续且分母正确。
     let is_jpeg = raw.starts_with(b"\xFF\xD8\xFF");
-    let is_bitmap = raw.starts_with(b"\x89PNG") || (raw.len() >= 2 && &raw[0..2] == b"BM");
-    let total = 6u32;
+    let is_png = raw.starts_with(b"\x89PNG");
+    let is_bitmap = is_png || (raw.len() >= 2 && &raw[0..2] == b"BM");
+    let total = if is_bitmap { 7u32 } else { 6u32 };
 
     // 1. 元数据检查（exiftool 类）
     banner(&format!("[1/{total}] 元数据检查 (metadata)"));
@@ -825,6 +888,41 @@ fn run_analyze(cli: &Cli) -> anyhow::Result<()> {
                 }
             }
             Err(e) => println!("[-] 图片无法解码，跳过卡方攻击：{e}"),
+        }
+    }
+
+    // 7. PNG 结构完整性审计（仅 PNG 触发；BMP 无 PNG 块结构，跳过）
+    if is_bitmap {
+        banner(&format!("[7/{total}] PNG 结构完整性审计 (png-audit)"));
+        if is_png {
+            let audit = pngaudit::audit(&raw);
+            if audit.issues.is_empty() {
+                println!(
+                    "{}",
+                    format!("[-] 未发现结构异常（共解析 {} 个块）", audit.chunk_count).green()
+                );
+            } else {
+                for issue in &audit.issues {
+                    let chunk = issue
+                        .chunk
+                        .map(|c| String::from_utf8_lossy(&c).to_string())
+                        .unwrap_or_else(|| "文件".to_string());
+                    let line = format!(
+                        "  [{}] offset={:<8} {}: {}",
+                        issue.severity.label(),
+                        issue.offset,
+                        chunk,
+                        issue.message
+                    );
+                    match issue.severity {
+                        pngaudit::Severity::Error => println!("{}", line.bright_red()),
+                        pngaudit::Severity::Warn => println!("{}", line.yellow()),
+                        pngaudit::Severity::Info => println!("{}", line.bright_black()),
+                    }
+                }
+            }
+        } else {
+            println!("[-] 非 PNG，跳过");
         }
     }
 
