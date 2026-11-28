@@ -248,3 +248,29 @@
   2. `gh release download --pattern` 需匹配完整资产名（`*windows*` 而非 `windows*`）
   3. tag 在 PR #15 合并前打出，故 v0.2.0 二进制内 anyhow 仍为 1.0.100（lock-only 补丁，无 CVE，无需重切 tag）
 - **下一步行动**: **P1 steghide 口令爆破（stegseek 对标）立项**——纯 Rust 复刻 steghide 提取通路（口令 SHA-1 派生 → Blowfish-CBC 头部解密校验 → mhash 型 PRNG 采样位置选择 → DCT 系数回读），难点在采样选择与嵌入算法的逐位一致性，验证以 `samples/steghide_embedded.jpg` 回环 + 与 stegseek 交叉比对，预估 2–3 个迭代。其余候选：wbStego 提取、Node.js 20→24 actions 升级
+
+### Iteration #14 - steghide 口令 magic 快速爆破 Phase 1（2026-11-29）
+- **Commit**: ead323f
+- **分支**: 从最新 main（c6e0e1a，v0.2.0）切出 `agent/steghide-crack`（不堆叠在未推送的 agent/png-audit 上）；切前 `git checkout -- .` 清掉纯 CRLF 噪音
+- **改动要点**:
+  - 新增 `src/steghidecrack.rs`（244 行，含 8 个单测）：stegseek 式 **magic 快速校验**字典爆破，只还原口令、不解密明文。纯函数拆分 `fold_digest`/`md5_seed`/`next_lcg`/`coef_to_embvalue`/`collect_embedded_values`/`verify_magic`/`try_passphrase` + IO 入口 `crack_steghide`
+  - Cargo.toml 新增 **`md5 = "0.8"`**（stainless-steel，零传递依赖、不碰 digest 框架，与现有 sha2/aes 的 digest 0.10 零冲突；禁用 RustCrypto md-5 0.11）；Cargo.lock 仅增 md5 0.8.1 一条
+  - main.rs：`mod steghidecrack`、CLI `--steghide-crack`（复用 `--wordlist`，本模式忽略 `--crack-out`）、`run_steghide_crack`、早返回链置于 `--crack` 之后；不挂 `--analyze`（爆破依赖外部字典属主动攻击）
+  - README：功能表/快速开始（含输出示例）/参数表/工作原理/FAQ，能力边界写明仅 JPEG、仅口令、24-bit 概率校验
+  - 计划留档 `.trae/documents/steghide口令爆破.md`
+- **CI 状态**: run 46164436511（build-loop）四平台全 success（windows-msvc/linux-musl/macos-x86_64/macos-aarch64），watch 退出码 0；仅 Node.js 20 弃用警告（用户已多次明确暂缓升级）
+- **本地运行结果**: precheck 退出码 0（fmt/clippy -D warnings/dev-release/74 测试全过，新增 8 个）；本地 dev-release 产物 E2E：①含 ctf123 字典命中 `password="ctf123"` Exit 0（numSamples=6744，第 4 个候选）；②不含正确口令字典 Exit 1；③PNG 输入中文 bail 拒绝 Exit 1；④干净负样本 steghide_smooth_base 零误报 Exit 1；⑤缺 --wordlist 报错 Exit 1。云端 Windows 产物 fetch_run 同样命中 ctf123、Exit 0、无 PANIC/ERROR，日志 `.local-logs/run_20261129_002250.log`
+- **交叉验证**: 同一字典 stegseek 0.6 `--crack` 同样命中 `ctf123` 并提取出 `STEGHIDE_SMOOTH_PAYLOAD_...`（Exit 0），miss 字典双方均报 "Could not find a valid passphrase"（Exit 1），结论逐字一致
+- **根因诊断 / 关键技术修正（推翻 #13 旧假设，务必以此为准）**:
+  1. **默认加密是 rijndael-128（AES-128）CBC，不是 Blowfish**（`steghide info` 实测）；但 magic 校验阶段完全不需要 AES
+  2. **magic 爆破的 PRNG seed 来自口令 MD5，不是 SHA-1**（stegseek Cracker.cc 实证）：MD5 16 字节按 **4 个小端 u32 异或折叠**成 seed
+  3. PRNG 是 32 位 LCG：`A=1367208549, C=1`，模 2³²（u32 wrapping）；采样索引 `valIdx = sv_idx + trunc((seed/2^32) * (numSamples-sv_idx))`
+  4. **采样数组只含非零 DCT 系数（含 block[0] 直流 DC，仅跳过值为 0）**，嵌入值 `|coef| % 2`；与 jsteg（跳 DC、跳 0/1/-1）规则不同，必须独立构建
+  5. 常量：Magic=`0x73688D`（24 bit，bit0=LSB 在前逐位比）、SamplesPerVertex=3、EmbValueModulus=2、CoeffPerBlock=64，共采样 24×3=72 个系数；RNG 碰撞沿用 stegseek "视为通过交严格提取复核" 策略
+- **环境备忘**:
+  1. clippy 1.100 拦截 `chunks_exact_to_as_chunks`：fold_digest 改 `digest.as_chunks::<4>().0`
+  2. md5 crate 的 `Digest(pub [u8;16])` 是公有元组结构体，直接 `.0` 取数组，无需 Deref 切片
+  3. loop_driver 的 fetch_run 调裸 `powershell.exe`，WSL PATH 不含 System32 时 127；前置 `export PATH=$PATH:/mnt/c/Windows/System32/WindowsPowerShell/v1.0` 即恢复 Start-Process 超时包装
+  4. PowerShell 内联含 `$()`/`${}`/管道的命令必被外层 PowerShell 截胡，复杂逻辑一律写 `.local-logs/*.sh`（先 `sed -i 's/\r$//'`）再 bash 执行
+- **能力红线（已写入代码注释与 README）**: 仅 JPEG、仅还原口令不产出明文；magic 为 24-bit 概率校验，理论假阳性约 2^-24，建议 `steghide info -p` 复核；命中依赖字典覆盖
+- **下一步行动**: Phase 1 目标达成、四平台云端验证通过。Phase 2（另立计划）：完整明文提取——Selector 图论匹配 + AES-128-CBC 解密 + zlib 解压 + EmbData 头部状态机。其余候选：wbStego 提取、Node.js 20→24 actions 升级
